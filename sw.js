@@ -1,8 +1,8 @@
 /* Offline support: the app opens without internet (bill reading and Drive still need internet).
    App files: newest from the network when online (so updates show at once), saved copy when offline.
    Google/Gemini requests are never cached. */
-const VERSION = 'pb-v1';
-const SHELL = ['./', 'index.html', 'css/app.css', 'js/db.js', 'js/import.js', 'js/ai.js', 'js/app.js', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png'];
+const VERSION = 'pb-v2';
+const SHELL = ['./', 'index.html', 'css/app.css', 'js/db.js', 'js/import.js', 'js/ai.js', 'js/app.js', 'js/sales.js', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== VERSION).map(x => caches.delete(x)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', e => {

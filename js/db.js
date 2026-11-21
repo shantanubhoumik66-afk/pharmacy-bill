@@ -155,7 +155,7 @@ function stock() {
   const get = (nm, bt) => {
     const k = normKey(nm) + '|' + batchKey(bt);
     let x = m.get(k);
-    if (!x) { x = { name: normKey(nm), batch: String(bt || '').trim() || '-', pur: 0, free: 0, sold: 0, add: 0, red: 0, cost: 0, exp: 0, mrp: 0, mfg: '', key: k }; m.set(k, x); }
+    if (!x) { x = { name: normKey(nm), batch: String(bt || '').trim() || '-', pur: 0, free: 0, sold: 0, add: 0, red: 0, cost: 0, exp: 0, mrp: 0, mfg: '', hsn: '', gst: 0, key: k }; m.set(k, x); }
     return x;
   };
   for (const l of D.purchases) {
@@ -167,6 +167,8 @@ function stock() {
     const k = expKey(l.exp); if (k) x.exp = k;
     if (num(l.mrp)) x.mrp = num(l.mrp);
     if (l.mfg) x.mfg = l.mfg;
+    if (l.hsn) x.hsn = String(l.hsn);
+    x.gst = num(l.cgst) + num(l.sgst);              // GST % of the latest bill of this batch (used on the sales invoice)
   }
   let unmatched = 0;
   for (const s of D.saleItems) {

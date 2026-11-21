@@ -103,15 +103,23 @@ async function importWorkbook(file, onProgress) {
   } };
   adj('StockAdjust', adjust); adj('StockAdjust Undone', adjustUndone, true);
 
-  // Shop name for the header
+  // Shop details for the invoice header (Sales Invoice A1, B2..B5; phone line from InvoicePrint A4)
   let shop = '';
-  if (wb.Sheets['Sales Invoice']) { const c = wb.Sheets['Sales Invoice']['A1']; shop = c ? txt(c.v) : ''; }
+  const shopInfo = {};
+  const cell = (n, a) => { const c = wb.Sheets[n] && wb.Sheets[n][a]; return c ? txt(c.v) : ''; };
+  if (wb.Sheets['Sales Invoice']) {
+    shop = cell('Sales Invoice', 'A1');
+    shopInfo.shopAddress = cell('Sales Invoice', 'B2'); shopInfo.shopGstin = cell('Sales Invoice', 'B3');
+    shopInfo.shopLic1 = cell('Sales Invoice', 'B4'); shopInfo.shopLic2 = cell('Sales Invoice', 'B5');
+  }
+  const ph = cell('InvoicePrint', 'A4').replace(/^phone\s*:?\s*/i, '');
+  if (ph) shopInfo.shopPhone = ph.replace(/\s{2,}/g, ', ');
 
   // the per-distributor sheets also give distributors that are not in Party Details
   const known = new Set(parties.map(p => DB.normKey(p.name)));
   for (const l of purchases) { const k = DB.normKey(l.distributor); if (k && !known.has(k)) { known.add(k); parties.push({ name: k, address: '', gstin: '', pan: '', phone: '', licence: '' }); } }
 
-  return { purchases, parties, sales, saleItems, adjust, adjustUndone, shop, report };
+  return { purchases, parties, sales, saleItems, adjust, adjustUndone, shop, shopInfo, report };
 }
 
 /* Replace all business data with the workbook's data */
@@ -124,6 +132,7 @@ async function applyImport(x) {
   if (x.adjust.length) await DB.putMany('adjust', x.adjust);
   if (x.adjustUndone.length) await DB.putMany('adjustUndone', x.adjustUndone);
   if (x.shop && !DB.getSetting('shopName')) await DB.setSetting('shopName', x.shop);
+  for (const [k, v] of Object.entries(x.shopInfo || {})) if (v && !DB.getSetting(k)) await DB.setSetting(k, v);
 }
 
 /* Export everything back to an Excel file in the same layout (one sheet per distributor) */
@@ -136,9 +145,13 @@ async function exportWorkbook() {
     ...st.map(s => [s.name, s.batch, s.pur, s.free, s.total, s.sold, s.add, s.red, s.rem, s.value])]), 'Stocks');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Distributor Name', 'Address', 'GSTIN', 'PAN', 'Phone No', 'Licence No', 'Bills', 'Total Purchase'],
     ...DB.partyStats().map(p => [p.name, p.address, p.gstin, p.pan, p.phone, p.licence, p.bills, p.total])]), 'Party Details');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Patient Name', 'Invoice No', 'Invoice Date', 'Total Invoice Amount', 'Patient Address', 'Doctor Name', 'Dr. Register No'],
+    ...DB.D.sales.map(x => [x.patient, x.invoiceNo, DB.showDate(x.date), x.total, x.address, x.doctor, x.drReg])]), 'Sales');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Date', 'Medicine Name', 'Qty Sold (packs)', 'Batch No', 'Invoice No', 'MRP', 'Discount %', 'Net Amount', 'Pack Size', 'Strip Qty', 'Loose Qty', 'Exp Date', 'GST %', 'Patient Name', 'MFG', 'HSN Code', 'Free Qty (pieces)'],
+    ...DB.D.saleItems.map(x => [DB.showDate(x.date), x.item, x.qtyPacks, x.batch, x.invoiceNo, x.mrp, x.disc, x.net, x.pack, x.strip, x.loose, x.exp, x.gst, x.patient, x.mfg, x.hsn, x.freePcs])]), 'SaleItems');
   const by = new Map();
   for (const l of DB.D.purchases) { const k = DB.normKey(l.distributor) || 'UNKNOWN'; if (!by.has(k)) by.set(k, []); by.get(k).push(l); }
-  const used = new Set(['STOCKS', 'PARTY DETAILS']);
+  const used = new Set(['STOCKS', 'PARTY DETAILS', 'SALES', 'SALEITEMS']);
   for (const [k, ls] of [...by.entries()].sort()) {
     let n = k.replace(/[\\\/\?\*\[\]:]/g, ' ').slice(0, 31).trim(); let i = 2;
     while (used.has(n.toUpperCase())) n = k.slice(0, 28) + ' ' + i++;

@@ -33,7 +33,8 @@ function download(name, blob) { const a = document.createElement('a'); a.href = 
 /* ---------------- navigation ---------------- */
 const NAV = [
   ['grp', 'Overview'], ['dashboard', 'Dashboard', '◧'],
-  ['grp', 'Bills'], ['scan', 'Scan bills', '📷'], ['bill', 'Bill Entry', '✎'], ['ledger', 'Distributor ledger', '▤'], ['purchases', 'Purchase Details', '🧾'], ['parties', 'Party Details', '🏢'],
+  ['grp', 'Bills'], ['scan', 'Scan bills', '📷'], ['bill', 'Bill Entry', '✎'], ['ledger', 'Distributor ledger', '▤'], ['purchases', 'Purchase Details', '📑'], ['parties', 'Party Details', '🏢'],
+  ['grp', 'Sales'], ['sale', 'Sales Invoice', '🧮'], ['sales', 'Sales', '🧾'], ['saleitems', 'Sale Items', '☰'], ['gst', 'GST', '%'],
   ['grp', 'Stock'], ['stock', 'Stocks', '📦'], ['medicine', 'Medicine Search', '🔍'], ['expiry', 'Expiry Search', '⏳'],
   ['grp', 'Setup'], ['settings', 'Settings & data', '⚙'],
 ];
@@ -84,7 +85,7 @@ function wireTable(id, rows, onClick, rerender) {
 
 /* ================= DASHBOARD ================= */
 PAGES.dashboard = () => {
-  setTop('Dashboard', `<button class="btn pri" onclick="go('scan')">📷 <span class="lbl">Scan bills</span></button><button class="btn" onclick="go('bill')">✎ <span class="lbl">New bill</span></button>`);
+  setTop('Dashboard', `<button class="btn pri" onclick="go('sale')">🧮 <span class="lbl">New sale</span></button><button class="btn" onclick="go('scan')">📷 <span class="lbl">Scan bills</span></button><button class="btn" onclick="go('bill')">✎ <span class="lbl">New bill</span></button>`);
   if (!DB.D.purchases.length) {
     $('page').innerHTML = `<div class="card" style="max-width:720px"><h2>Welcome 👋</h2>
       <p>Start by importing your existing Excel workbook (<b>PHARMACY_BILL.xlsm</b>). All distributors, bills, stock and adjustments are copied into this app. The file stays on this device.</p>
@@ -99,12 +100,14 @@ PAGES.dashboard = () => {
   const neg = st.filter(s => s.rem < 0);
   const mStart = DB.todayISO().slice(0, 8) + '01', bm = DB.bills().filter(b => (b.date || '') >= mStart);
   const ready = DB.D.inbox.filter(x => x.status === 'ready').length;
+  const td = DB.todayISO(), salesT = DB.D.sales.filter(x => x.date === td), salesM = DB.D.sales.filter(x => (x.date || '') >= mStart);
   const byDist = {}; bm.forEach(b => byDist[b.distributor] = (byDist[b.distributor] || 0) + b.total);
   const top = Object.entries(byDist).sort((a, b) => b[1] - a[1]).slice(0, 6), mx = top.length ? top[0][1] : 1;
   $('page').innerHTML = `
     ${ready ? `<div class="note ok">📥 ${ready} bill${ready > 1 ? 's are' : ' is'} read and waiting for your check. <a href="#/scan">Review now</a></div>` : ''}
     <div class="kpis">
       <div class="kpi"><span>Stock value</span><b>${money(val)}</b><small>${inStock.length.toLocaleString('en-IN')} batches in stock</small></div>
+      <div class="kpi"><span>Sales today</span><b>${money(salesT.reduce((a, x) => a + N(x.total), 0))}</b><small>${salesT.length} invoice(s) · month ${money(salesM.reduce((a, x) => a + N(x.total), 0))}</small></div>
       <div class="kpi"><span>Purchases this month</span><b>${money(bm.reduce((a, b) => a + b.total, 0))}</b><small>${bm.length} bills</small></div>
       <div class="kpi ${soon.length ? 'warn' : ''}"><span>Expiring in 3 months</span><b>${soon.length}</b><small>${money(soon.reduce((a, s) => a + s.value, 0))} of stock</small></div>
       <div class="kpi ${expired.length ? 'bad' : ''}"><span>Already expired, in stock</span><b>${expired.length}</b><small>${money(expired.reduce((a, s) => a + s.value, 0))}</small></div>
@@ -694,16 +697,24 @@ PAGES.settings = q => {
     <label class="row-flex small" style="margin-top:10px"><input type="checkbox" id="sAuto" ${DB.getSetting('autoRead') ? 'checked' : ''}> Read new bills automatically when they are found</label>
     <div class="row-flex" style="margin-top:12px"><button class="btn pri" id="sDrSave">Save</button><button class="btn" id="sDrTest">Connect &amp; test</button><span id="sDrMsg" class="small"></span></div></div>
 
-  <div class="card"><h2>🏪 Shop</h2><div class="fields"><div><label class="l">Pharmacy name</label><input class="f" id="sShop" value="${g('shopName')}"></div>
-    <div><label class="l">Theme</label><select class="f" id="sTheme"><option value="">Same as device</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div>
+  <div class="card"><h2>🏪 Shop (printed on the sales invoice)</h2><div class="fields"><div><label class="l">Pharmacy name</label><input class="f" id="sShop" value="${g('shopName')}"></div>
+    <div><label class="l">Address</label><input class="f" id="sAddr" value="${g('shopAddress')}"></div><div><label class="l">Phone</label><input class="f" id="sPhone" value="${g('shopPhone')}"></div>
+    <div><label class="l">Email</label><input class="f" id="sEmail" value="${g('shopEmail')}"></div><div><label class="l">GSTIN</label><input class="f" id="sGstin" value="${g('shopGstin')}"></div>
+    <div><label class="l">Licence No 1</label><input class="f" id="sLic1" value="${g('shopLic1')}"></div><div><label class="l">Licence No 2</label><input class="f" id="sLic2" value="${g('shopLic2')}"></div>
+    <div><label class="l">Printed By</label><input class="f" id="sPby" value="${esc(DB.getSetting('printedBy', 'ADMIN'))}"></div><div><label class="l">Signature line</label><input class="f" id="sSign" value="${esc(DB.getSetting('signText', 'For Sig of Qualified Person'))}"></div>
+    <div><label class="l">GST place of supply</label><input class="f" id="sPos" value="${esc(DB.getSetting('placeOfSupply', '19-West Bengal'))}"></div>
+    <div><label class="l">0% GST sales count as</label><select class="f" id="sZero"><option value="NIL">Nil rated</option><option value="EXEMPT">Exempted</option></select></div>
+    <div><label class="l">Theme</label><select class="f" id="sTheme"><option value="">Same as device</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+    <div style="grid-column:1/-1"><label class="l">Terms &amp; Conditions (one per line)</label><textarea class="f" id="sTerms" rows="4">${esc(DB.getSetting('terms', Sales.DEFAULT_TERMS))}</textarea></div></div>
     <div class="row-flex" style="margin-top:12px"><button class="btn pri" id="sShopSave">Save</button></div></div>
 
   <div class="card"><h2>💾 Data</h2>
-    <p class="small muted" style="margin-top:0">${DB.D.purchases.length.toLocaleString('en-IN')} bill lines · ${DB.D.parties.length} distributors · ${DB.D.saleItems.length} sale lines · ${DB.D.adjust.length} stock adjustments. Data is stored on this device. Download a backup regularly.</p>
+    <p class="small muted" style="margin-top:0">${DB.D.purchases.length.toLocaleString('en-IN')} bill lines · ${DB.D.parties.length} distributors · ${DB.D.sales.length} sales invoices (${DB.D.saleItems.length} lines) · ${DB.D.adjust.length} stock adjustments. Data is stored on this device. Download a backup regularly.</p>
     <div class="row-flex"><button class="btn pri" id="sImp">⬆ Import Excel workbook (.xlsm)</button><button class="btn" id="sExp">⬇ Export to Excel</button>
       <button class="btn" id="sBak">⬇ Download backup</button><button class="btn" id="sRes">⬆ Restore backup</button><button class="btn bad" id="sWipe">Delete all data</button></div>
     <p class="small muted">Use the backup file to move your data between the shop PC and your phone.</p></div>`;
   $('sTheme').value = DB.getSetting('theme', '') || '';
+  $('sZero').value = DB.getSetting('zeroGstAs', 'NIL') || 'NIL';
   if (q.get('s') === 'drive') setTimeout(() => $('sec-drive').scrollIntoView({ behavior: 'smooth' }), 50);
   $('sKeySave').onclick = async () => { await DB.setSetting('geminiKey', $('sKey').value.trim()); await DB.setSetting('geminiModel', $('sModel').value.trim()); toast('Saved'); };
   $('sKeyTest').onclick = async () => {
@@ -721,7 +732,10 @@ PAGES.settings = q => {
     try { const f = await AI.driveList(); $('sDrMsg').innerHTML = '<span class="pos">✔ Connected. ' + f.length + ' bill file(s) in the folder.</span>'; PAGES.scan._checked = false; }
     catch (e) { $('sDrMsg').innerHTML = '<span class="neg">✖ ' + esc(e.message) + '</span>'; }
   };
-  $('sShopSave').onclick = async () => { await DB.setSetting('shopName', $('sShop').value.trim()); await DB.setSetting('theme', $('sTheme').value); applyTheme(); renderNav(); toast('Saved'); };
+  $('sShopSave').onclick = async () => {
+    for (const [k, id] of [['shopName', 'sShop'], ['shopAddress', 'sAddr'], ['shopPhone', 'sPhone'], ['shopEmail', 'sEmail'], ['shopGstin', 'sGstin'], ['shopLic1', 'sLic1'], ['shopLic2', 'sLic2'],
+      ['printedBy', 'sPby'], ['signText', 'sSign'], ['placeOfSupply', 'sPos'], ['zeroGstAs', 'sZero'], ['terms', 'sTerms']]) await DB.setSetting(k, $(id).value.trim());
+    await DB.setSetting('theme', $('sTheme').value); applyTheme(); renderNav(); toast('Saved'); };
   $('sImp').onclick = importExcelFlow;
   $('sExp').onclick = () => Importer.exportWorkbook().catch(e => toast(e.message));
   $('sBak').onclick = async () => download('pharmacy-bill-backup-' + DB.todayISO() + '.json', new Blob([JSON.stringify(await DB.exportBackup())], { type: 'application/json' }));

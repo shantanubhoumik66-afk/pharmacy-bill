@@ -13,14 +13,18 @@ A modern web app version of the **PHARMACY_BILL.xlsm** workbook. It works on And
 | Stocks (with Adjust stock, Undo, Adjust log) | Stocks, StockAdjust, StockAdjust Undone |
 | Medicine Search | Medicine Search |
 | Expiry Search | Expiry Search |
-| Dashboard | new: stock value, monthly purchases, expiring stock |
-
-Sales Invoice, invoice printing and the GST summary come in stage 2. Sales already in the workbook are imported and counted in stock.
+| Sales Invoice (batch picker, Pack / Strip / Loose / Free, stock check, Save & print) | Sales Invoice, InvoicePrint |
+| Sales (view, print, modify, delete an invoice) | Sales |
+| Sale Items (product-wise lines) | SaleItems |
+| GST: B2CS (7), Nil rated (8), HSN (12), Documents (13), export to Excel | GST |
+| Dashboard | new: sales today, stock value, monthly purchases, expiring stock |
 
 ## Calculations (copied from the workbook macros)
 - **Net Amount** = Quantity × Rate × (1 − Discount% / 100) × (1 + (CGST% + SGST%) / 100). Free quantity is not charged.
 - **Remaining stock** per medicine + batch = Purchased + Free + Add − Reduce − Sold.
 - **Stock value** = Remaining × cost per pack, where cost per pack = money paid ÷ all packs received (free packs make it cheaper).
+- **Sale line** = (Strip + Loose ÷ Pack) × MRP × (1 − Disc%), rounded to the paisa; free pieces leave stock but are not charged. MRP includes GST, so GST = amount × GST% ÷ (100 + GST%).
+- **GST reports**: taxable value = net ÷ (1 + GST%), tax split half CGST, half SGST; place of supply 19-West Bengal (Settings).
 - Rounding follows Excel VBA `Round` (halves to even). Checked against the real workbook: all 2,092 batches and all quantity totals match. 3 batches differ by 1 paisa, because Excel keeps extra hidden digits when a value lands exactly on half a paisa.
 
 ## How automatic bill reading works
