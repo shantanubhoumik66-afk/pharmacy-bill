@@ -1,2 +1,4 @@
 *.zip
 .DS_Store
+license-generator.html
+/license-generator.html

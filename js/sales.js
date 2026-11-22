@@ -207,6 +207,7 @@ function checkQty(i, k) {
   refreshSaleRow(i);
 }
 async function saveSale(print) {
+  if (!License.guardWrite()) return;
   const pn = String(SI.patient || '').trim();
   if (!pn) { toast('Enter the patient name first'); return $('siP').focus(); }
   const ls = SI.lines.filter(l => String(l.item).trim());
@@ -295,6 +296,7 @@ function viewInvoice(inv) {
   $('ivPr').onclick = () => printInvoice(inv);
   $('ivMod').onclick = () => { closeModal(); go('sale', { edit: inv }); };
   $('ivDel').onclick = async () => {
+    if (!License.guardWrite()) return;
     const ls = DB.D.saleItems.filter(x => invKey(x.invoiceNo) === invKey(inv));
     if (!await ask('Delete invoice', 'Delete invoice ' + inv + ' of ' + (h.patient || '') + '?\nStock of its products will be restored. This cannot be undone.', 'Delete', true)) return;
     await DB.delMany('saleItems', ls.map(x => x.id));

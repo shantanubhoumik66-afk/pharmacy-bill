@@ -59,6 +59,7 @@ function render() {
   closeSide();
   (PAGES[r.page] || PAGES.dashboard)(r.q);
   renderNav();
+  $('licBar').innerHTML = License.licenseBanner();
 }
 window.addEventListener('hashchange', () => { LIMIT = {}; render(); window.scrollTo(0, 0); });
 function closeSide() { $('side').classList.remove('on'); $('scrim').classList.remove('on'); }
@@ -421,6 +422,7 @@ function dupCheck() {
   if (b) $('seeDup').onclick = e => { e.preventDefault(); showBill(b.key); };
 }
 async function saveBill() {
+  if (!License.guardWrite()) return;
   const dist = DB.normKey(BE.distributor), inv = String(BE.invoiceNo || '').trim();
   if (!dist) { toast('Choose the distributor first'); return $('beDist').focus(); }
   if (!inv) { toast('Type the Invoice No'); return $('beInv').focus(); }
@@ -467,7 +469,7 @@ async function showBill(key) {
     <div class="row-flex" style="margin-top:14px">${b.image || b.lines.some(l => l.imageId) ? '<button class="btn" id="bImg">🧾 Bill image</button>' : ''}<span class="grow"></span>
       <button class="btn bad" id="bDel">Delete bill</button><button class="btn pri" id="bEdit">✎ Edit</button></div>`, true);
   $('bEdit').onclick = () => { closeModal(); go('bill', { edit: key }); };
-  $('bDel').onclick = async () => { if (await ask('Delete bill', 'Delete invoice ' + b.invoiceNo + ' of ' + b.distributor + ' (' + b.lines.length + ' lines, ' + money(b.total) + ')?\nStock will be reduced.', 'Delete', true)) { await DB.delMany('purchases', b.lines.map(l => l.id)); toast('Bill deleted'); render(); } };
+  $('bDel').onclick = async () => { if (!License.guardWrite()) return; if (await ask('Delete bill', 'Delete invoice ' + b.invoiceNo + ' of ' + b.distributor + ' (' + b.lines.length + ' lines, ' + money(b.total) + ')?\nStock will be reduced.', 'Delete', true)) { await DB.delMany('purchases', b.lines.map(l => l.id)); toast('Bill deleted'); render(); } };
   if ($('bImg')) $('bImg').onclick = async () => { const id = (b.lines.find(l => l.imageId) || {}).imageId; const im = await DB.getImage(id); if (im) window.open(URL.createObjectURL(im.blob), '_blank'); else toast('Image not on this device'); };
 }
 
@@ -550,6 +552,7 @@ function partyForm(p) {
   $('fG').oninput = () => { const g = $('fG').value.toUpperCase().trim(); $('fMsg').innerHTML = g.length === 15 ? DB.gstinOK(g) ? '<span class="pos">GSTIN looks valid · PAN ' + DB.panOf(g) + '</span>' : '<span class="neg">GSTIN format is not valid</span>' : ''; };
   $('fG').oninput();
   $('fSave').onclick = async () => {
+    if (!License.guardWrite()) return;
     const name = DB.normKey($('fN').value), g = $('fG').value.toUpperCase().trim(), a = $('fA').value.trim();
     if (!name) return $('fMsg').innerHTML = '<span class="neg">Type the distributor name</span>';
     if (!a) return $('fMsg').innerHTML = '<span class="neg">Type the address</span>';
@@ -562,7 +565,7 @@ function partyForm(p) {
     await DB.putMany('parties', [{ name, address: a, gstin: g, pan: DB.panOf(g), phone: $('fP').value.trim(), licence: $('fL').value.trim() }]);
     closeModal(); toast('Saved'); render();
   };
-  if ($('fDel')) $('fDel').onclick = async () => { if (await ask('Delete', 'Delete ' + p.name + '?', 'Delete', true)) { await DB.delMany('parties', [p.name]); closeModal(); render(); } };
+  if ($('fDel')) $('fDel').onclick = async () => { if (!License.guardWrite()) return; if (await ask('Delete', 'Delete ' + p.name + '?', 'Delete', true)) { await DB.delMany('parties', [p.name]); closeModal(); render(); } };
 }
 
 /* ================= STOCKS ================= */
@@ -593,6 +596,7 @@ function adjustForm(r) {
     <div style="grid-column:1/-1"><label class="l">Reason</label><select class="f" id="aW"><option>Stock count correction</option><option>Damaged / broken</option><option>Expired - returned to distributor</option><option>Expired - destroyed</option><option>Opening stock</option><option>Other</option></select></div></div>
     <div class="row-flex" style="margin-top:14px"><span class="grow"></span><button class="btn" onclick="closeModal()">Cancel</button><button class="btn pri" id="aS">Save</button></div>`);
   $('aS').onclick = async () => {
+    if (!License.guardWrite()) return;
     const a = N($('aA').value), d = N($('aR').value);
     if (!a && !d) return toast('Type a quantity to add or reduce');
     const now = new Date();
@@ -601,6 +605,7 @@ function adjustForm(r) {
   };
 }
 async function undoAdjust() {
+  if (!License.guardWrite()) return;
   const last = DB.D.adjust.slice().sort((a, b) => (a.id || 0) - (b.id || 0)).pop();
   if (!last) return toast('No adjustment to undo');
   if (!await ask('Undo last adjustment', `${last.item} (${last.batch || '-'}): ${last.add ? '+' + last.add : ''}${last.reduce ? ' −' + last.reduce : ''}\n${last.reason}, entered ${last.enteredOn}`, 'Undo')) return;
@@ -634,7 +639,6 @@ PAGES.medicine = q => {
 /* ================= EXPIRY SEARCH ================= */
 PAGES.expiry = q => {
   const t1 = q.get('from') || '', t2 = q.get('to') || '', onlyStock = q.get('st') !== '0';
-  setTop('Expiry Search');
   let a = DB.expKey(t1 || t2), b = DB.expKey(t2 || t1); if (a > b) [a, b] = [b, a];
   const d = new Date(), ym = d.getFullYear() * 100 + d.getMonth() + 1;
   const addM = (k, m) => { let y = Math.floor(k / 100), mo = k % 100 + m; while (mo > 12) { mo -= 12; y++; } while (mo < 1) { mo += 12; y--; } return y * 100 + mo; };
@@ -652,6 +656,8 @@ PAGES.expiry = q => {
     rows = [...m.values()].filter(x => !onlyStock || x.rem > 0).sort((p, q) => p.k - q.k || p.name.localeCompare(q.name));
   }
   const show = k => DB.expShow(k);
+  setTop('Expiry Search', rows.length ? `<button class="btn" id="exPdf">⬇ <span class="lbl">Save as PDF</span></button><button class="btn" id="exPrint">🖨 <span class="lbl">Print</span></button>` : '');
+  const EXP = { rows, a, b, onlyStock, ym };
   $('page').innerHTML = `<div class="card"><div class="fields"><div><label class="l">FROM (MM/YY)</label><input class="f" id="eF" value="${esc(t1)}" placeholder="e.g. 12/26"></div><div><label class="l">TO (MM/YY)</label><input class="f" id="eT" value="${esc(t2)}" placeholder="e.g. 03/27"></div></div>
     <div class="chips" style="margin-top:10px"><button class="chip" data-r="exp">Already expired</button><button class="chip" data-r="0">This month</button><button class="chip" data-r="3">Next 3 months</button><button class="chip" data-r="6">Next 6 months</button>
     <label class="chip"><input type="checkbox" id="eSt" ${onlyStock ? 'checked' : ''}> Only medicines still in stock</label></div></div>
@@ -667,14 +673,43 @@ PAGES.expiry = q => {
     if (r === 'exp') return go('expiry', { from: '1/20', to: show(addM(ym, -1)), st: $('eSt').checked ? '1' : '0' });
     go('expiry', { from: show(ym), to: show(addM(ym, +r)), st: $('eSt').checked ? '1' : '0' });
   });
+  if ($('exPrint')) $('exPrint').onclick = () => expiryReport(EXP, false);
+  if ($('exPdf')) $('exPdf').onclick = () => expiryReport(EXP, true);
   wireTable('ex', rows, null, () => PAGES.expiry(route().q));
 };
+/* Printable / Save-as-PDF report of the current expiry results (browser print dialog offers Save as PDF) */
+function expiryReport(E, pdf) {
+  const show = k => DB.expShow(k);
+  const title = 'Expiry report ' + show(E.a) + (E.b !== E.a ? ' to ' + show(E.b) : '') + (E.onlyStock ? ' (in stock)' : '');
+  const totQ = E.rows.reduce((x, r) => x + r.q, 0), totF = E.rows.reduce((x, r) => x + r.f, 0), totR = E.rows.reduce((x, r) => x + r.rem, 0), totV = E.rows.reduce((x, r) => x + r.val, 0);
+  const body = `<h1>${esc(DB.getSetting('shopName', '') || 'Pharmacy')}</h1><h2>${esc(title)}</h2>
+    <div class="meta">Printed ${new Date().toLocaleString('en-IN')} · ${E.rows.length} medicine line(s)${E.onlyStock ? '' : ' (all purchases, not only current stock)'}</div>
+    <table><thead><tr><th>#</th><th>Medicine Name</th><th class="n">Quantity</th><th class="n">Free</th><th class="n">Total</th><th class="n">In stock</th><th class="n">Stock value</th><th>Expiry</th></tr></thead><tbody>
+    ${E.rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.name)}</td><td class="n">${qty0(r.q)}</td><td class="n">${r.f ? qty0(r.f) : ''}</td><td class="n">${qty0(r.q + r.f)}</td><td class="n">${qty0(r.rem)}</td><td class="n">${r.val ? money(r.val) : ''}</td><td class="${r.k < E.ym ? 'bad' : 'warn'}">${show(r.k)}</td></tr>`).join('')}
+    </tbody><tfoot><tr><td></td><td>TOTAL</td><td class="n">${qty0(totQ)}</td><td class="n">${qty0(totF)}</td><td class="n">${qty0(totQ + totF)}</td><td class="n">${qty0(totR)}</td><td class="n">${money(totV)}</td><td></td></tr></tfoot></table>`;
+  const css = `@page{size:A4;margin:12mm}body{font:12px Arial,sans-serif;color:#000;margin:0}h1{font-size:16px;margin:0}h2{font-size:13px;margin:4px 0;font-weight:600}.meta{color:#555;font-size:11px;margin-bottom:10px}
+    table{width:100%;border-collapse:collapse}th,td{border:1px solid #999;padding:4px 6px;font-size:11px;text-align:left}th{background:#eee}td.n,th.n{text-align:right}tfoot td{font-weight:bold;background:#f3f3f3}td.bad{color:#b00;font-weight:bold}td.warn{color:#a15c00}`;
+  const w = window.open('', '_blank');
+  if (!w) return toast('Allow pop-ups to ' + (pdf ? 'save the PDF' : 'print'));
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${css}</style></head><body>${body}<script>setTimeout(()=>{print()},350)<\/script></body></html>`);
+  w.document.close();
+  if (pdf) toast('In the dialog, choose “Save as PDF” as the printer');
+}
 
 /* ================= SETTINGS ================= */
 PAGES.settings = q => {
   setTop('Settings & data');
   const g = k => esc(DB.getSetting(k, '') || '');
+  const L = LIC.info, dl = LIC.daysLeft();
+  const licStatus = LIC.readOnly ? `<span class="pill bad">Expired ${esc(DB.showDate(L.exp))}</span>` : L ? `<span class="pill ${dl <= 15 ? 'warn' : 'ok'}">${dl} day${dl === 1 ? '' : 's'} left · ends ${esc(DB.showDate(L.exp))}</span>` : '';
   $('page').innerHTML = `
+  <div class="card"><h2>🔐 Licence &amp; security</h2>
+    <div class="row-flex" style="margin-bottom:10px"><div class="grow"><b>${esc(L ? L.shop : '')}</b> ${licStatus}<div class="muted small">${L && L.plan ? 'Plan: ' + esc(L.plan) + ' · ' : ''}${L && L.activatedAt ? 'Activated ' + esc(L.activatedAt.slice(0, 10)) : ''}</div></div>
+      <button class="btn pri" id="sRenew">Enter renewal code</button></div>
+    <div style="border-top:1px solid var(--line);padding-top:10px">
+      <label class="l">App password (locks the app on this device each time it opens)</label>
+      <div class="row-flex">${License.hasPassword() ? '<span class="pill ok">Password is on</span><button class="btn" id="sPwChange">Change</button><button class="btn bad" id="sPwOff">Remove</button>' : '<button class="btn pri" id="sPwSet">Set a password</button>'}</div>
+      <p class="muted small" style="margin-top:8px">The password locks the screen so no one else can open the app or see the data on this device. It does not hide the program code itself.</p></div></div>
   <div class="card" id="sec-ai"><h2>✨ Automatic bill reading (Google Gemini, free)</h2>
     <ol class="steps small"><li>Open <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a> and sign in with your Google account.</li>
       <li>Press <b>Create API key</b> and copy it.</li><li>Paste it below and press <b>Save</b>, then <b>Test</b>.</li></ol>
@@ -714,6 +749,10 @@ PAGES.settings = q => {
       <button class="btn" id="sBak">⬇ Download backup</button><button class="btn" id="sRes">⬆ Restore backup</button><button class="btn bad" id="sWipe">Delete all data</button></div>
     <p class="small muted">Use the backup file to move your data between the shop PC and your phone.</p></div>`;
   $('sTheme').value = DB.getSetting('theme', '') || '';
+  $('sRenew').onclick = () => License.renewDialog();
+  if ($('sPwSet')) $('sPwSet').onclick = () => passwordDialog(false);
+  if ($('sPwChange')) $('sPwChange').onclick = () => passwordDialog(true);
+  if ($('sPwOff')) $('sPwOff').onclick = async () => { if (await ask('Remove password', 'Remove the app password? The app will open without asking.', 'Remove', true)) { await License.setPassword(''); toast('Password removed'); render(); } };
   $('sZero').value = DB.getSetting('zeroGstAs', 'NIL') || 'NIL';
   if (q.get('s') === 'drive') setTimeout(() => $('sec-drive').scrollIntoView({ behavior: 'smooth' }), 50);
   $('sKeySave').onclick = async () => { await DB.setSetting('geminiKey', $('sKey').value.trim()); await DB.setSetting('geminiModel', $('sModel').value.trim()); toast('Saved'); };
@@ -740,13 +779,15 @@ PAGES.settings = q => {
   $('sExp').onclick = () => Importer.exportWorkbook().catch(e => toast(e.message));
   $('sBak').onclick = async () => download('pharmacy-bill-backup-' + DB.todayISO() + '.json', new Blob([JSON.stringify(await DB.exportBackup())], { type: 'application/json' }));
   $('sRes').onclick = async () => {
+    if (!License.guardWrite()) return;
     const [f] = await pickFile('.json,application/json'); if (!f) return;
     try { const obj = JSON.parse(await f.text()); if (!await ask('Restore backup', 'Replace ALL data on this device with the backup from ' + (obj.at || '?').slice(0, 10) + '?', 'Restore', true)) return; await DB.importBackup(obj); toast('Backup restored'); render(); }
     catch (e) { toast(e.message, 5000); }
   };
-  $('sWipe').onclick = async () => { if (await ask('Delete all data', 'Delete ALL bills, distributors, stock and sales on this device? Download a backup first.', 'Delete everything', true)) { await DB.clearStores(['parties', 'purchases', 'sales', 'saleItems', 'adjust', 'adjustUndone', 'inbox']); toast('All data deleted'); render(); } };
+  $('sWipe').onclick = async () => { if (!License.guardWrite()) return; if (await ask('Delete all data', 'Delete ALL bills, distributors, stock and sales on this device? Download a backup first.', 'Delete everything', true)) { await DB.clearStores(['parties', 'purchases', 'sales', 'saleItems', 'adjust', 'adjustUndone', 'inbox']); toast('All data deleted'); render(); } };
 };
 async function importExcelFlow() {
+  if (!License.guardWrite()) return;
   const [f] = await pickFile('.xlsm,.xlsx,.xls'); if (!f) return;
   modal('<h3><span class="spin"></span> Reading ' + esc(f.name) + '…</h3><p class="muted small" id="impMsg">This can take a few seconds.</p>');
   try {
@@ -759,12 +800,29 @@ async function importExcelFlow() {
     closeModal(); toast('Imported ' + x.purchases.length.toLocaleString('en-IN') + ' bill lines'); go('dashboard'); render();
   } catch (e) { closeModal(); toast('Import failed: ' + e.message, 6000); console.error(e); }
 }
+function passwordDialog(change) {
+  modal(`<h3>${change ? 'Change' : 'Set'} app password <button class="btn sm x" onclick="closeModal()">✕</button></h3>
+    ${change ? '<label class="l">Current password</label><input class="f" type="password" id="pwOld" autocomplete="off"><div style="height:8px"></div>' : ''}
+    <label class="l">New password</label><input class="f" type="password" id="pwNew" autocomplete="off">
+    <label class="l" style="margin-top:8px">Repeat new password</label><input class="f" type="password" id="pwNew2" autocomplete="off">
+    <div id="pwMsg" class="small neg" style="margin:8px 0;min-height:18px"></div>
+    <div class="row-flex" style="justify-content:flex-end"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn pri" id="pwSave">Save</button></div>
+    <p class="muted small">If the password is forgotten, it can only be cleared by restoring a backup on a fresh install. Keep a backup.</p>`);
+  $('pwSave').onclick = async () => {
+    if (change && !await License.checkPassword($('pwOld').value)) return $('pwMsg').textContent = 'Current password is wrong.';
+    const a = $('pwNew').value, b = $('pwNew2').value;
+    if (a.length < 4) return $('pwMsg').textContent = 'Use at least 4 characters.';
+    if (a !== b) return $('pwMsg').textContent = 'The two passwords do not match.';
+    await License.setPassword(a); closeModal(); toast('Password saved'); render();
+  };
+}
 function applyTheme() { const t = DB.getSetting('theme', ''); if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
 
 /* ================= start ================= */
 (async () => {
   try { await DB.loadAll(); } catch (e) { $('page').innerHTML = '<div class="note bad">This browser blocked local storage, so the app cannot keep data. Open it in Chrome or Edge (not a private window).</div>'; return; }
   applyTheme();
+  await License.licenseStart();
   render();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});   // ask the browser not to clear the data

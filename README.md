@@ -12,7 +12,7 @@ A modern web app version of the **PHARMACY_BILL.xlsm** workbook. It works on And
 | Party Details | Party Details |
 | Stocks (with Adjust stock, Undo, Adjust log) | Stocks, StockAdjust, StockAdjust Undone |
 | Medicine Search | Medicine Search |
-| Expiry Search | Expiry Search |
+| Expiry Search (with Save as PDF / Print) | Expiry Search |
 | Sales Invoice (batch picker, Pack / Strip / Loose / Free, stock check, Save & print) | Sales Invoice, InvoicePrint |
 | Sales (view, print, modify, delete an invoice) | Sales |
 | Sale Items (product-wise lines) | SaleItems |
@@ -44,6 +44,13 @@ A modern web app version of the **PHARMACY_BILL.xlsm** workbook. It works on And
 - **Gemini key (free):** Settings → follow the link to aistudio.google.com/app/apikey → paste the key → Test.
 - **Google Drive folder:** Settings → step-by-step guide (create a free Google Cloud OAuth Client ID once, then paste the folder link).
 - **Your data:** Settings → *Import Excel workbook* → choose PHARMACY_BILL.xlsm. The file is read on the device and never uploaded.
+
+## Licence & app lock
+- The app must be **activated** with a signed licence code. The code carries the shop name and an expiry date and is signed with a private key only the provider holds, so a shop cannot forge or extend it. The app holds only the public key.
+- After expiry the app becomes **read-only**: viewing and printing still work, but new bills, sales and stock changes are blocked until a **renewal code** is entered (Settings → Renew, or the banner).
+- An optional **app password** locks the screen each time the app opens on that device.
+- Codes are made with `license-generator.html` (kept privately by the provider, never in this repo). It holds the private signing key — keep a safe backup and never share it.
+- Note: a web app's source cannot be hidden; the licence controls *access and the renewal period*, not code secrecy.
 
 ## Where the data is kept
 In this browser on this device (IndexedDB), and it keeps working offline. Use **Settings → Download backup** regularly, and *Restore backup* to move the data to another device. Live sync between phone and PC (cloud database) is the next step.
