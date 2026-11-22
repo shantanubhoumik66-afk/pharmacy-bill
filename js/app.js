@@ -7,6 +7,13 @@ const money = n => '₹' + (+n || 0).toLocaleString('en-IN', { minimumFractionDi
 const qty = n => { n = +n || 0; return n ? (Math.round(n * 100) / 100).toLocaleString('en-IN') : ''; };
 const qty0 = n => (Math.round((+n || 0) * 100) / 100).toLocaleString('en-IN');
 const N = DB.num;
+const SYNC_SQL = `create table if not exists records (
+  shop text not null, store text not null, uid text not null,
+  up int8 not null, del int2 not null default 0, data jsonb,
+  primary key (shop, store, uid)
+);
+alter table records enable row level security;
+create policy "shop access" on records for all to anon using (true) with check (true);`;
 
 function toast(msg, ms) { const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), ms || 2600); }
 function modal(html, wide) { $('modalBox').className = 'modal-box' + (wide ? ' wide' : ''); $('modalBox').innerHTML = html; $('modal').classList.add('on'); }
@@ -43,6 +50,7 @@ function renderNav() {
   $('nav').innerHTML = NAV.map(n => n[0] === 'grp' ? `<div class="grp">${n[1]}</div>` :
     `<a href="#/${n[0]}" class="${cur === n[0] ? 'on' : ''}"><span class="ic">${n[2]}</span>${n[1]}${n[0] === 'scan' && waiting ? `<span class="cnt">${waiting}</span>` : ''}</a>`).join('');
   $('shopName').textContent = DB.getSetting('shopName', '') || 'Pharmacy Bill';
+  updateSyncDot();
   $('dataInfo').textContent = DB.D.purchases.length ? DB.D.purchases.length.toLocaleString('en-IN') + ' bill lines · ' + DB.bills().length.toLocaleString('en-IN') + ' bills' : 'No data yet';
 }
 function route() {
@@ -732,6 +740,23 @@ PAGES.settings = q => {
     <label class="row-flex small" style="margin-top:10px"><input type="checkbox" id="sAuto" ${DB.getSetting('autoRead') ? 'checked' : ''}> Read new bills automatically when they are found</label>
     <div class="row-flex" style="margin-top:12px"><button class="btn pri" id="sDrSave">Save</button><button class="btn" id="sDrTest">Connect &amp; test</button><span id="sDrMsg" class="small"></span></div></div>
 
+  <div class="card" id="sec-sync"><h2>🔄 Live sync (phone &amp; PC show the same data)</h2>
+    <p class="small" style="margin-top:0">Keep every device of this shop in sync through a free Supabase account. Set it up once on one device, then paste the same three boxes on your other devices.</p>
+    <details class="small"><summary><b>One-time setup (about 10 minutes)</b></summary><ol class="steps">
+      <li>Go to <a href="https://supabase.com" target="_blank" rel="noopener">supabase.com</a> → sign up (free) → <b>New project</b>. Pick any name and a database password (save it). Wait for it to finish.</li>
+      <li>Open <b>Project Settings → API</b>. Copy the <b>Project URL</b> and the <b>anon public</b> key into the boxes below.</li>
+      <li>Open <b>SQL Editor → New query</b>, paste the code below, press <b>Run</b>:
+        <div class="out" style="white-space:pre-wrap;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:11.5px;margin:6px 0" id="sqlBox">${esc(SYNC_SQL)}</div>
+        <button class="btn sm" id="sqlCopy">Copy SQL</button></li>
+      <li>Press <b>Make a Shop ID</b> below (once), then <b>Connect</b>.</li>
+      <li>On your other devices: open this app, come to Settings, and paste the <b>same</b> Project URL, anon key and Shop ID, then Connect.</li></ol></details>
+    <div class="fields" style="margin-top:10px">
+      <div style="grid-column:1/-1"><label class="l">Project URL</label><input class="f" id="syUrl" value="${g('syncUrl')}" placeholder="https://xxxx.supabase.co"></div>
+      <div style="grid-column:1/-1"><label class="l">anon public key</label><input class="f" id="syKey" value="${g('syncKey')}" placeholder="eyJ..."></div>
+      <div style="grid-column:1/-1"><label class="l">Shop ID (same on all devices of this shop)</label><div class="row-flex"><input class="f grow" id="syShop" value="${g('syncShop')}" placeholder="shop_..."><button class="btn" id="syMake">Make a Shop ID</button></div></div>
+    </div>
+    <div class="row-flex" style="margin-top:12px"><button class="btn pri" id="syConnect">Connect</button><button class="btn" id="syDisc">Disconnect</button><span id="syMsg" class="small"></span></div>
+    <p class="muted small">The Shop ID is the key to your data — keep it private, like a password. Anyone with all three boxes can see this shop's data.</p></div>
   <div class="card"><h2>🏪 Shop (printed on the sales invoice)</h2><div class="fields"><div><label class="l">Pharmacy name</label><input class="f" id="sShop" value="${g('shopName')}"></div>
     <div><label class="l">Address</label><input class="f" id="sAddr" value="${g('shopAddress')}"></div><div><label class="l">Phone</label><input class="f" id="sPhone" value="${g('shopPhone')}"></div>
     <div><label class="l">Email</label><input class="f" id="sEmail" value="${g('shopEmail')}"></div><div><label class="l">GSTIN</label><input class="f" id="sGstin" value="${g('shopGstin')}"></div>
@@ -750,6 +775,25 @@ PAGES.settings = q => {
     <p class="small muted">Use the backup file to move your data between the shop PC and your phone.</p></div>`;
   $('sTheme').value = DB.getSetting('theme', '') || '';
   $('sRenew').onclick = () => License.renewDialog();
+  if ($('sqlCopy')) $('sqlCopy').onclick = () => { navigator.clipboard.writeText(SYNC_SQL).then(() => toast('SQL copied')); };
+  $('syMake').onclick = () => { $('syShop').value = 'shop_' + Array.from(crypto.getRandomValues(new Uint8Array(18))).map(b => b.toString(36)).join('').slice(0, 24); };
+  $('syConnect').onclick = async () => {
+    const url = $('syUrl').value.trim(), key = $('syKey').value.trim(), shop = $('syShop').value.trim();
+    if (!url || !key || !shop) return $('syMsg').innerHTML = '<span class="neg">Fill all three boxes (or press Make a Shop ID).</span>';
+    $('syMsg').innerHTML = '<span class="spin"></span> Checking…';
+    try {
+      await Sync.test(url, key, shop);
+      await DB.setSetting('syncUrl', url); await DB.setSetting('syncKey', key); await DB.setSetting('syncShop', shop);
+      $('syMsg').innerHTML = '<span class="pos">Connected. Syncing…</span>';
+      await Sync.start(() => { if (!['bill', 'sale'].includes(route().page)) render(); else renderNav(); });
+      toast('Live sync is on'); updateSyncDot();
+    } catch (e) { $('syMsg').innerHTML = '<span class="neg">' + esc(e.message) + '</span>'; }
+  };
+  $('syDisc').onclick = async () => {
+    if (!await ask('Disconnect sync', 'Stop syncing on this device? The data stays here, but changes will no longer travel to or from other devices until you connect again.', 'Disconnect')) return;
+    Sync.stop(); await DB.setSetting('syncUrl', ''); await DB.setSetting('syncKey', ''); await DB.setSetting('syncShop', '');
+    toast('Sync disconnected'); render();
+  };
   if ($('sPwSet')) $('sPwSet').onclick = () => passwordDialog(false);
   if ($('sPwChange')) $('sPwChange').onclick = () => passwordDialog(true);
   if ($('sPwOff')) $('sPwOff').onclick = async () => { if (await ask('Remove password', 'Remove the app password? The app will open without asking.', 'Remove', true)) { await License.setPassword(''); toast('Password removed'); render(); } };
@@ -800,6 +844,13 @@ async function importExcelFlow() {
     closeModal(); toast('Imported ' + x.purchases.length.toLocaleString('en-IN') + ' bill lines'); go('dashboard'); render();
   } catch (e) { closeModal(); toast('Import failed: ' + e.message, 6000); console.error(e); }
 }
+function updateSyncDot() {
+  const el = $('syncDot'); if (!el) return;
+  const s = Sync.state, on = Sync.enabled();
+  const map = { off: ['', 'Not connected'], connecting: ['#f5b454', 'Connecting…'], ok: ['#2fbf71', 'Synced' + (s.pending ? ' · ' + s.pending + ' to send' : '')], error: ['#ff5c5c', 'Sync error'], offline: ['#93a3ab', 'Offline — will catch up'] };
+  const [c, t] = on ? (map[s.state] || map.connecting) : map.off;
+  el.innerHTML = on ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};margin-right:6px"></span>${t}` : '';
+}
 function passwordDialog(change) {
   modal(`<h3>${change ? 'Change' : 'Set'} app password <button class="btn sm x" onclick="closeModal()">✕</button></h3>
     ${change ? '<label class="l">Current password</label><input class="f" type="password" id="pwOld" autocomplete="off"><div style="height:8px"></div>' : ''}
@@ -824,6 +875,8 @@ function applyTheme() { const t = DB.getSetting('theme', ''); if (t) document.do
   applyTheme();
   await License.licenseStart();
   render();
+  Sync.onStatus(updateSyncDot);
+  if (Sync.enabled()) Sync.start(() => { if (!['bill', 'sale'].includes(route().page)) render(); else renderNav(); });
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});   // ask the browser not to clear the data
 })();

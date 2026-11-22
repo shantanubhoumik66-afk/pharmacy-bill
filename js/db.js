@@ -2,7 +2,7 @@
    Calculations follow the rules of the original Excel macros (PHARMACY_BILL.xlsm). */
 'use strict';
 
-const DB_NAME = 'pharmacy-bill', DB_VER = 1;
+const DB_NAME = 'pharmacy-bill', DB_VER = 2;
 const STORES = {
   parties: { keyPath: 'name' },            // distributors (Party Details)
   purchases: { keyPath: 'id', autoIncrement: true }, // every bill line (the distributor sheets)
@@ -13,8 +13,13 @@ const STORES = {
   inbox: { keyPath: 'fileId' },             // bill images found in Drive / uploaded
   settings: { keyPath: 'k' },
   images: { keyPath: 'id' },               // bill photos / PDFs (not loaded into memory)
+  synctomb: { keyPath: 'k' },              // tombstones: deleted rows, so a delete spreads to other devices
 };
-const NOT_IN_MEMORY = ['images'];
+const NOT_IN_MEMORY = ['images', 'synctomb'];
+/* Stores that sync to the cloud between a shop's devices. Each row gets _uid (stable id) and _up (changed-at ms). */
+const SYNC_STORES = ['parties', 'purchases', 'sales', 'saleItems', 'adjust', 'adjustUndone'];
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+let onLocalChange = null;                   // set by the sync module
 
 let _db;
 function openDB() {
@@ -53,28 +58,53 @@ async function loadAll() {
       else D[n] = all;
     }
   });
+  // give older rows (made before sync existed) a stable id, so they can sync later
+  for (const n of SYNC_STORES) {
+    const need = D[n].filter(r => !r._uid);
+    if (need.length) { const now = Date.now(); need.forEach(r => { r._uid = uuid(); r._up = r._up || now; }); await rawPut(n, need); }
+  }
   invalidate();
 }
+function rawPut(store, rows) { return tx([store], 'readwrite', t => { const s = t.objectStore(store); return Promise.all(rows.map(r => reqP(s.put(r)))); }); }
 
-/* put many rows; returns them with ids filled in */
-async function putMany(store, rows) {
+/* put many rows; returns them with ids filled in. opts.fromSync = applied from the cloud (don't push back). */
+async function putMany(store, rows, opts = {}) {
+  if (SYNC_STORES.includes(store) && !opts.fromSync) { const now = Date.now(); rows.forEach(r => { if (!r._uid) r._uid = uuid(); r._up = now; delete r._del; }); }
   await tx([store], 'readwrite', t => {
     const s = t.objectStore(store);
-    return Promise.all(rows.map(r => reqP(s.put(r)).then(id => { if (STORES[store].autoIncrement) r.id = id; })));
+    return Promise.all(rows.map(r => reqP(s.put(r)).then(id => { if (STORES[store].autoIncrement && r.id == null) r.id = id; })));
   });
   const key = STORES[store].keyPath;
   const map = new Map(D[store].map(x => [x[key], x]));
   rows.forEach(r => map.set(r[key], r));
   D[store] = [...map.values()];
   invalidate();
+  if (SYNC_STORES.includes(store) && !opts.fromSync && onLocalChange) onLocalChange(store, rows);
   return rows;
 }
-async function delMany(store, keys) {
-  await tx([store], 'readwrite', t => { const s = t.objectStore(store); keys.forEach(k => s.delete(k)); });
+async function delMany(store, keys, opts = {}) {
   const key = STORES[store].keyPath, ks = new Set(keys);
+  const gone = D[store].filter(x => ks.has(x[key]));
+  await tx([store], 'readwrite', t => { const s = t.objectStore(store); keys.forEach(k => s.delete(k)); });
   D[store] = D[store].filter(x => !ks.has(x[key]));
+  if (SYNC_STORES.includes(store) && !opts.fromSync) {
+    const now = Date.now(), tombs = gone.filter(r => r._uid).map(r => ({ k: store + '|' + r._uid, store, uid: r._uid, _up: now, _del: 1 }));
+    if (tombs.length) { await rawPut('synctomb', tombs); if (onLocalChange) onLocalChange('synctomb', tombs); }
+  }
   invalidate();
 }
+/* apply a change that came from the cloud (last-write-wins by _up). Does not push back. */
+async function applyRemote(store, rec) {
+  const local = D[store].find(x => x._uid === rec._uid);
+  if (local && Number(local._up || 0) > Number(rec._up || 0)) return false;   // our copy is newer
+  if (rec._del) { if (local) await delMany(store, [local[STORES[store].keyPath]], { fromSync: true }); return true; }
+  const row = { ...rec };
+  if (STORES[store].autoIncrement && local) row.id = local.id;                 // keep local autoincrement id
+  else if (STORES[store].autoIncrement) delete row.id;
+  await putMany(store, [row], { fromSync: true });
+  return true;
+}
+const byUid = (store, uid) => D[store].find(x => x._uid === uid);
 async function clearStores(names) {
   await tx(names, 'readwrite', t => names.forEach(n => t.objectStore(n).clear()));
   names.forEach(n => { if (n === 'settings') D.settings = {}; else D[n] = []; });
@@ -251,9 +281,9 @@ async function importBackup(obj) {
   if (!obj || obj.app !== 'pharmacy-bill') throw new Error('This is not a Pharmacy Bill backup file.');
   const names = Object.keys(STORES).filter(n => n !== 'settings' && !NOT_IN_MEMORY.includes(n));
   await clearStores(names);
-  for (const n of names) if (Array.isArray(obj[n]) && obj[n].length) await putMany(n, obj[n]);
+  for (const n of names) if (Array.isArray(obj[n]) && obj[n].length) await putMany(n, obj[n], { fromSync: SYNC_STORES.includes(n) });
   for (const s of obj.settings || []) await setSetting(s.k, s.v);
 }
 
-window.DB = { r2x, D, loadAll, putImage, getImage, delImage, putMany, delMany, clearStores, setSetting, getSetting, num, r2, normKey, batchKey, calcNet, expKey, expShow, expNorm,
+window.DB = { r2x, D, loadAll, applyRemote, byUid, rawPut, tx, reqP, SYNC_STORES, uuid, setLocalChange: fn => { onLocalChange = fn; }, putImage, getImage, delImage, putMany, delMany, clearStores, setSetting, getSetting, num, r2, normKey, batchKey, calcNet, expKey, expShow, expNorm,
   toISO, showDate, todayISO, stock, itemInfo, itemNames, bills, partyStats, gstinOK, panOf, matchWords, exportBackup, importBackup, invalidate };

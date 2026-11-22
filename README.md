@@ -52,8 +52,16 @@ A modern web app version of the **PHARMACY_BILL.xlsm** workbook. It works on And
 - Codes are made with `license-generator.html` (kept privately by the provider, never in this repo). It holds the private signing key — keep a safe backup and never share it.
 - Note: a web app's source cannot be hidden; the licence controls *access and the renewal period*, not code secrecy.
 
+## Live sync (phone & PC show the same data)
+Optional. Connect every device of one shop to a free **Supabase** project and they stay in sync automatically.
+- Setup is in **Settings → Live sync**: create a free project, run the shown SQL once, paste the Project URL, anon key and a Shop ID (one per shop, same on all devices).
+- Each synced row carries a stable id (`_uid`) and changed-at time (`_up`); changes are pushed on save and pulled every few seconds. **Newest change wins.** Deletes travel as tombstones.
+- Medicines combine by **name + batch** in the stock view, so the same item from two devices is one stock line.
+- It still works offline and catches up when the connection returns. A sidebar dot shows the status.
+- The Shop ID is the key to the data — keep it private. (The open RLS policy means anyone with URL + anon key + Shop ID can read that shop's data; use a long random Shop ID.)
+
 ## Where the data is kept
-In this browser on this device (IndexedDB), and it keeps working offline. Use **Settings → Download backup** regularly, and *Restore backup* to move the data to another device. Live sync between phone and PC (cloud database) is the next step.
+In this browser on each device (IndexedDB), and it works offline. Use **Settings → Download backup** for a file copy, and *Restore backup* to move data to a device without sync.
 
 ## Files
 `index.html`, `css/app.css`, `js/db.js` (data + calculations), `js/import.js` (Excel import/export), `js/ai.js` (Gemini + Google Drive), `js/app.js` (screens), `sw.js` (offline), `vendor/xlsx.full.min.js` (SheetJS, Apache-2.0).
