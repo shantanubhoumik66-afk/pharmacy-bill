@@ -60,6 +60,15 @@ async function pbkdf2(pw, saltB64) {
   return { salt: bytesToB64u(salt), hash: bytesToB64u(bits) };
 }
 async function setPassword(pw) { await DB.setSetting('lockHash', pw ? await pbkdf2(pw) : null); }
+/* Master reset: a signed code (purpose:"reset") from the provider clears the app password for THIS shop. */
+async function resetPasswordWithCode(code) {
+  const p = await parseCode(code);
+  if (p.purpose !== 'reset') throw new Error('This is not a password-reset code.');
+  if (LIC.info && DB.normKey(p.shop) !== DB.normKey(LIC.info.shop)) throw new Error('This reset code is for “' + p.shop + '”, not for this shop.');
+  if (p.exp < DB.todayISO()) throw new Error('This reset code has expired. Ask for a fresh one.');
+  await DB.setSetting('lockHash', null);
+  return p;
+}
 async function checkPassword(pw) { const h = DB.getSetting('lockHash', null); if (!h) return true; const r = await pbkdf2(pw, h.salt); return r.hash === h.hash; }
 const hasPassword = () => !!DB.getSetting('lockHash', null);
 
@@ -93,9 +102,25 @@ function lockGate() {
     showGate(`<h2 style="text-align:center;margin:0 0 14px">Enter password</h2>
       <input class="f" type="password" id="gPw" placeholder="App password" autocomplete="current-password">
       <div id="gMsg" class="small neg" style="margin:8px 0;min-height:18px"></div>
-      <button class="btn pri" id="gGo" style="width:100%">Unlock</button>`);
+      <button class="btn pri" id="gGo" style="width:100%">Unlock</button>
+      <p class="muted small" style="margin-top:12px;text-align:center"><a href="#" id="gForgot">Forgot password?</a></p>`);
     const go2 = async () => { if (await checkPassword($('gPw').value)) { closeGate(); res(); } else { $('gMsg').textContent = 'Wrong password.'; $('gPw').select(); } };
     $('gGo').onclick = go2; $('gPw').onkeydown = e => { if (e.key === 'Enter') go2(); };
+    $('gForgot').onclick = e => {
+      e.preventDefault();
+      $('gate').querySelector('.card').innerHTML = `<h2 style="text-align:center;margin:0 0 4px">Reset password</h2>
+        <p class="muted small" style="text-align:center;margin-bottom:12px">Ask your provider for a password-reset code for<br><b>${esc(LIC.info ? LIC.info.shop : '')}</b>, then paste it here.</p>
+        <textarea class="f" id="gReset" rows="3" placeholder="Paste the reset code" autocomplete="off"></textarea>
+        <div id="gMsg2" class="small" style="margin:8px 0;min-height:18px"></div>
+        <button class="btn pri" id="gResetGo" style="width:100%">Clear password</button>
+        <p class="muted small" style="margin-top:12px;text-align:center"><a href="#" onclick="location.reload();return false">Back</a></p>`;
+      $('gResetGo').onclick = async () => {
+        $('gMsg2').innerHTML = '<span class="spin"></span> Checking…';
+        try { await resetPasswordWithCode($('gReset').value); $('gMsg2').innerHTML = '<span class="pos">Password cleared. Opening…</span>'; setTimeout(() => { closeGate(); res(); }, 700); }
+        catch (err) { $('gMsg2').innerHTML = '<span class="neg">' + esc(err.message) + '</span>'; }
+      };
+      $('gReset').focus();
+    };
     $('gPw').focus();
   });
 }
@@ -140,5 +165,5 @@ async function licenseStart() {
 }
 
 window.LIC = LIC;
-window.License = { activate, parseCode, setPassword, checkPassword, hasPassword, licenseStart, licenseBanner, guardWrite, renewDialog, LICENSE_PUBKEY };
+window.License = { activate, parseCode, setPassword, checkPassword, hasPassword, resetPasswordWithCode, licenseStart, licenseBanner, guardWrite, renewDialog, LICENSE_PUBKEY };
 window.renewDialog = renewDialog;

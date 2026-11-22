@@ -48,7 +48,7 @@ A modern web app version of the **PHARMACY_BILL.xlsm** workbook. It works on And
 ## Licence & app lock
 - The app must be **activated** with a signed licence code. The code carries the shop name and an expiry date and is signed with a private key only the provider holds, so a shop cannot forge or extend it. The app holds only the public key.
 - After expiry the app becomes **read-only**: viewing and printing still work, but new bills, sales and stock changes are blocked until a **renewal code** is entered (Settings → Renew, or the banner).
-- An optional **app password** locks the screen each time the app opens on that device.
+- An optional **app password** locks the screen each time the app opens on that device. If forgotten, the provider makes a **password-reset code** (valid a few days, for that one shop) which clears it from the "Forgot password?" link.
 - Codes are made with `license-generator.html` (kept privately by the provider, never in this repo). It holds the private signing key — keep a safe backup and never share it.
 - Note: a web app's source cannot be hidden; the licence controls *access and the renewal period*, not code secrecy.
 
