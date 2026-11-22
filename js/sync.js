@@ -24,6 +24,13 @@ function config() {
 const enabled = () => !!config();
 const headers = () => ({ apikey: cfg.key, Authorization: 'Bearer ' + cfg.key, 'Content-Type': 'application/json' });
 const rest = path => cfg.url + '/rest/v1/' + path;
+/* fetch that gives up after `ms` instead of hanging forever (slow mobile networks) */
+async function fetchT(url, opts, ms) {
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), ms || 25000);
+  try { return await fetch(url, { ...opts, signal: ac.signal }); }
+  catch (e) { throw (e && e.name === 'AbortError') ? new Error('The connection timed out. Check the internet (turn off Data Saver / Lite mode) and try again.') : e; }
+  finally { clearTimeout(t); }
+}
 
 /* a local row -> the cloud record (strip the device-local autoincrement id) */
 function toRecord(store, r) {
@@ -34,24 +41,30 @@ function tombRecord(t) { return { shop: cfg.shop, store: t.store, uid: t.uid, up
 
 async function pushRecords(recs) {
   if (!recs.length) return;
-  const res = await fetch(rest(TABLE), { method: 'POST', headers: { ...headers(), Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(recs) });
+  const res = await fetchT(rest(TABLE), { method: 'POST', headers: { ...headers(), Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(recs) }, 30000);
   if (!res.ok) throw new Error('push ' + res.status + ' ' + (await res.text()).slice(0, 120));
 }
 
 /* pull rows changed after ts; apply them; return {max, seen:Map(store|uid -> up)} */
 async function pullSince(ts, collectSeen) {
-  const res = await fetch(rest(TABLE) + '?shop=eq.' + encodeURIComponent(cfg.shop) + '&up=gt.' + ts + '&order=up.asc&limit=5000', { headers: headers() });
-  if (!res.ok) throw new Error('pull ' + res.status + ' ' + (await res.text()).slice(0, 120));
-  const rows = await res.json();
-  let max = ts; const seen = collectSeen ? new Map() : null;
-  for (const row of rows) {
-    max = Math.max(max, Number(row.up) || 0);
-    if (seen) seen.set(row.store + '|' + row.uid, Number(row.up) || 0);
-    if (!DB.SYNC_STORES.includes(row.store)) continue;
-    const rec = row.del ? { _uid: row.uid, _up: Number(row.up), _del: 1 } : { ...(row.data || {}), _uid: row.uid, _up: Number(row.up) };
-    await DB.applyRemote(row.store, rec);
+  const PAGE = 1000;
+  let max = ts, count = 0, from = 0; const seen = collectSeen ? new Map() : null;
+  for (;;) {
+    const res = await fetchT(rest(TABLE) + '?shop=eq.' + encodeURIComponent(cfg.shop) + '&up=gt.' + ts + '&order=up.asc', { headers: { ...headers(), Range: from + '-' + (from + PAGE - 1), 'Range-Unit': 'items' } }, 30000);
+    if (!res.ok && res.status !== 206) throw new Error('pull ' + res.status + ' ' + (await res.text()).slice(0, 120));
+    const rows = await res.json();
+    for (const row of rows) {
+      max = Math.max(max, Number(row.up) || 0);
+      if (seen) seen.set(row.store + '|' + row.uid, Number(row.up) || 0);
+      if (!DB.SYNC_STORES.includes(row.store)) continue;
+      const rec = row.del ? { _uid: row.uid, _up: Number(row.up), _del: 1 } : { ...(row.data || {}), _uid: row.uid, _up: Number(row.up) };
+      await DB.applyRemote(row.store, rec);
+    }
+    count += rows.length;
+    if (rows.length < PAGE) break;
+    from += PAGE;
   }
-  return { max, count: rows.length, seen };
+  return { max, count, seen };
 }
 
 async function allLocalRecords() {
@@ -133,7 +146,7 @@ document.addEventListener('visibilitychange', () => { if (cfg && !document.hidde
 /* check the project before saving the settings */
 async function test(url, key, shop) {
   url = url.trim().replace(/\/+$/, ''); key = key.trim();
-  const res = await fetch(url + '/rest/v1/' + TABLE + '?select=shop&limit=1', { headers: { apikey: key, Authorization: 'Bearer ' + key } });
+  const res = await fetchT(url + '/rest/v1/' + TABLE + '?select=shop&limit=1', { headers: { apikey: key, Authorization: 'Bearer ' + key } }, 15000);
   if (res.status === 404) throw new Error('Table “records” not found. Run the setup SQL in Supabase first.');
   if (res.status === 401 || res.status === 403) throw new Error('Key not accepted. Check the anon key, and that the table allows anon access.');
   if (!res.ok) throw new Error('Could not reach the project (' + res.status + '). Check the Project URL.');
