@@ -119,6 +119,8 @@ const getSetting = (k, d) => (k in D.settings ? D.settings[k] : d);
 async function putImage(id, blob, name) { await tx(['images'], 'readwrite', t => t.objectStore('images').put({ id, blob, name, at: Date.now() })); return id; }
 async function getImage(id) { if (!id) return null; let out; await tx(['images'], 'readonly', async t => { out = await reqP(t.objectStore('images').get(id)); }); return out || null; }
 async function delImage(id) { await tx(['images'], 'readwrite', t => t.objectStore('images').delete(id)); }
+async function imagesInfo() { let count = 0, bytes = 0; await tx(['images'], 'readonly', async t => { const all = await reqP(t.objectStore('images').getAll()); count = all.length; bytes = all.reduce((a, x) => a + ((x.blob && x.blob.size) || 0), 0); }); return { count, bytes }; }
+async function clearImages() { await tx(['images'], 'readwrite', t => t.objectStore('images').clear()); const rows = D.purchases.filter(r => r.imageId); rows.forEach(r => r.imageId = null); if (rows.length) await rawPut('purchases', rows); for (const x of D.inbox) if (x.imageId || x.pages) { x.imageId = null; x.pages = []; } if (D.inbox.length) await rawPut('inbox', D.inbox); invalidate(); }
 
 /* ---------------- helpers that copy the Excel rules ---------------- */
 const num = v => { if (v == null || v === '') return 0; const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[,\s₹]/g, '')); return isFinite(n) ? n : 0; };
@@ -285,5 +287,5 @@ async function importBackup(obj) {
   for (const s of obj.settings || []) await setSetting(s.k, s.v);
 }
 
-window.DB = { r2x, D, loadAll, applyRemote, byUid, rawPut, tx, reqP, SYNC_STORES, uuid, setLocalChange: fn => { onLocalChange = fn; }, putImage, getImage, delImage, putMany, delMany, clearStores, setSetting, getSetting, num, r2, normKey, batchKey, calcNet, expKey, expShow, expNorm,
+window.DB = { r2x, D, loadAll, applyRemote, byUid, rawPut, tx, reqP, SYNC_STORES, uuid, setLocalChange: fn => { onLocalChange = fn; }, imagesInfo, clearImages, putImage, getImage, delImage, putMany, delMany, clearStores, setSetting, getSetting, num, r2, normKey, batchKey, calcNet, expKey, expShow, expNorm,
   toISO, showDate, todayISO, stock, itemInfo, itemNames, bills, partyStats, gstinOK, panOf, matchWords, exportBackup, importBackup, invalidate };

@@ -458,6 +458,7 @@ async function saveBill() {
     cgst: N(l.cgst), sgst: N(l.sgst), net: DB.calcNet(l), imageId: (BE.pages && BE.pages[0]) || null, source: BE.fromAI ? 'ai' : 'manual', savedAt: new Date().toISOString(),
   }));
   await DB.putMany('purchases', rows);
+  if (!DB.getSetting('keepImages', true)) { for (const id of (BE.pages || [])) if (id) await DB.delImage(id); }
   if (BE.inboxId) { const x = DB.D.inbox.find(i => i.fileId === BE.inboxId); if (x) { x.status = 'saved'; x.invoiceNo = inv; await DB.putMany('inbox', [x]); } }
   const next = BE.inboxId ? DB.D.inbox.find(x => x.status === 'ready') : null;
   BE = null; await DB.setSetting('billDraft', null);
@@ -772,7 +773,12 @@ PAGES.settings = q => {
     <p class="small muted" style="margin-top:0">${DB.D.purchases.length.toLocaleString('en-IN')} bill lines · ${DB.D.parties.length} distributors · ${DB.D.sales.length} sales invoices (${DB.D.saleItems.length} lines) · ${DB.D.adjust.length} stock adjustments. Data is stored on this device. Download a backup regularly.</p>
     <div class="row-flex"><button class="btn pri" id="sImp">⬆ Import Excel workbook (.xlsm)</button><button class="btn" id="sExp">⬇ Export to Excel</button>
       <button class="btn" id="sBak">⬇ Download backup</button><button class="btn" id="sRes">⬆ Restore backup</button><button class="btn bad" id="sWipe">Delete all data</button></div>
-    <p class="small muted">Use the backup file to move your data between the shop PC and your phone.</p></div>`;
+    <p class="small muted">Use the backup file to move your data between the shop PC and your phone.</p>
+    <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px">
+      <label class="row-flex small"><input type="checkbox" id="sKeepImg"> Keep the scanned bill photo on this device (so you can open the original bill later)</label>
+      <div class="row-flex" style="margin-top:10px"><span id="sStorage" class="small muted">Checking storage…</span><span class="grow"></span><button class="btn" id="sClearImg">Clear bill photos</button></div>
+      <p class="small muted" style="margin-top:6px">Turning this off keeps only the bill <b>data</b> (medicines, prices, batches) and uses almost no space. Clearing photos never deletes any bill data.</p>
+    </div></div>`;
   $('sTheme').value = DB.getSetting('theme', '') || '';
   $('sRenew').onclick = () => License.renewDialog();
   if ($('sqlCopy')) $('sqlCopy').onclick = () => { navigator.clipboard.writeText(SYNC_SQL).then(() => toast('SQL copied')); };
@@ -798,6 +804,17 @@ PAGES.settings = q => {
   if ($('sPwChange')) $('sPwChange').onclick = () => passwordDialog(true);
   if ($('sPwOff')) $('sPwOff').onclick = async () => { if (await ask('Remove password', 'Remove the app password? The app will open without asking.', 'Remove', true)) { await License.setPassword(''); toast('Password removed'); render(); } };
   $('sZero').value = DB.getSetting('zeroGstAs', 'NIL') || 'NIL';
+  if ($('sKeepImg')) {
+    $('sKeepImg').checked = DB.getSetting('keepImages', true);
+    $('sKeepImg').onchange = async () => { await DB.setSetting('keepImages', $('sKeepImg').checked); toast('Saved'); };
+    const showStorage = async () => {
+      const im = await DB.imagesInfo(); let line = im.count + ' bill photo(s), ' + (im.bytes / 1048576).toFixed(1) + ' MB on this device';
+      if (navigator.storage && navigator.storage.estimate) { const e = await navigator.storage.estimate(); if (e.usage) line += ' · app total ' + (e.usage / 1048576).toFixed(1) + ' MB'; }
+      if ($('sStorage')) $('sStorage').textContent = line;
+    };
+    showStorage();
+    $('sClearImg').onclick = async () => { const im = await DB.imagesInfo(); if (!im.count) return toast('No bill photos stored'); if (await ask('Clear bill photos', 'Delete ' + im.count + ' stored bill photo(s) (' + (im.bytes / 1048576).toFixed(1) + ' MB)?\nAll bill DATA stays. Only the original pictures are removed.', 'Clear photos', true)) { await DB.clearImages(); toast('Bill photos cleared'); showStorage(); } };
+  }
   if (q.get('s') === 'drive') setTimeout(() => $('sec-drive').scrollIntoView({ behavior: 'smooth' }), 50);
   $('sKeySave').onclick = async () => { await DB.setSetting('geminiKey', $('sKey').value.trim()); await DB.setSetting('geminiModel', $('sModel').value.trim()); toast('Saved'); };
   $('sKeyTest').onclick = async () => {
