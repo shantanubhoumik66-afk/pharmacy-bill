@@ -7,7 +7,7 @@ const money = n => '₹' + (+n || 0).toLocaleString('en-IN', { minimumFractionDi
 const qty = n => { n = +n || 0; return n ? (Math.round(n * 100) / 100).toLocaleString('en-IN') : ''; };
 const qty0 = n => (Math.round((+n || 0) * 100) / 100).toLocaleString('en-IN');
 const N = DB.num;
-const APP_VERSION = 'pb-v10';   // keep equal to VERSION in sw.js
+const APP_VERSION = 'pb-v11';   // keep equal to VERSION in sw.js
 const SYNC_SQL = `create table if not exists records (
   shop text not null, store text not null, uid text not null,
   up int8 not null, del int2 not null default 0, data jsonb,
@@ -275,7 +275,8 @@ PAGES.bill = async q => {
     if (!x) return go('scan');
     const r = x.result || { lines: [] };
     const m = r.distributorMatch;
-    BE = { distributor: m ? m.name : (r.distributorRaw || '').toUpperCase(), distMatch: m, distRaw: r.distributorRaw, newParty: m ? null : (r.distributorRaw ? { gstin: r.gstin, address: r.address, phone: r.phone, licence: r.licence } : null),
+    const scanParty = { gstin: r.gstin || '', address: r.address || '', phone: r.phone || '', licence: r.licence || '' };
+    BE = { distributor: m ? m.name : (r.distributorRaw || '').toUpperCase(), distMatch: m, distRaw: r.distributorRaw, scanParty, newParty: m ? null : (r.distributorRaw ? scanParty : null),
       invoiceNo: r.invoiceNo || '', billDate: r.billDate || DB.todayISO(), billTotal: r.billTotal || 0, lines: r.lines.length ? r.lines.map(l => ({ ...l })) : [blankLine()],
       inboxId, imageId: x.imageId, pages: x.pages || [x.imageId], fromAI: !!x.result };
   } else if (editKey) {
@@ -448,9 +449,16 @@ async function saveBill() {
   const k = dist + '|' + DB.normKey(inv);
   if (DB.bills().some(b => b.key === k && b.key !== BE.editKey) && !await ask('Invoice already saved', 'Invoice ' + inv + ' is already saved for ' + dist + '.\nAdd these lines again?', 'Add again', true)) return;
 
-  if (!DB.D.parties.some(p => DB.normKey(p.name) === dist)) {
-    const np = BE.newParty || {};
-    await DB.putMany('parties', [{ name: dist, address: np.address || '', gstin: (np.gstin || '').toUpperCase(), pan: DB.panOf(np.gstin), phone: np.phone || '', licence: np.licence || '' }]);
+  const sp = BE.scanParty || BE.newParty || {};
+  const existingParty = DB.D.parties.find(p => DB.normKey(p.name) === dist);
+  if (!existingParty) {
+    await DB.putMany('parties', [{ name: dist, address: sp.address || '', gstin: (sp.gstin || '').toUpperCase(), pan: DB.panOf(sp.gstin), phone: sp.phone || '', licence: sp.licence || '' }]);
+  } else if (BE.fromAI) {
+    // scanned bill: fill in any detail the distributor is missing, especially GSTIN (so future scans auto-match by GSTIN)
+    let ch = false;
+    if (!existingParty.gstin && sp.gstin) { existingParty.gstin = sp.gstin.toUpperCase(); existingParty.pan = DB.panOf(sp.gstin); ch = true; }
+    for (const f of ['address', 'phone', 'licence']) if (!existingParty[f] && sp[f]) { existingParty[f] = sp[f]; ch = true; }
+    if (ch) await DB.putMany('parties', [existingParty]);
   }
   if (BE.editIds && BE.editIds.length) await DB.delMany('purchases', BE.editIds);
   const rows = ls.map(l => ({

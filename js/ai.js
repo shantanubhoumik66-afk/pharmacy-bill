@@ -93,7 +93,7 @@ async function readBill(blobs) {
 }
 
 /* Compact form for matching names: "DOLO-650 TAB." == "DOLO 650 TAB" */
-const compact = s => DB.normKey(s).replace(/[^A-Z0-9]/g, '');
+const compact = s => DB.normKey(s).replace(/\bM\s*\/?\s*S\b/g, '').replace(/[^A-Z0-9]/g, '').replace(/S$/, '');
 function similarity(a, b) {
   const ta = new Set(DB.normKey(a).split(/[^A-Z0-9]+/).filter(Boolean)), tb = new Set(DB.normKey(b).split(/[^A-Z0-9]+/).filter(Boolean));
   if (!ta.size || !tb.size) return 0;
