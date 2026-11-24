@@ -626,7 +626,7 @@ function partyForm(p) {
   const x = p || { name: '', address: '', gstin: '', phone: '', licence: '' };
   modal(`<h3>${p ? 'Edit distributor' : 'Add distributor'} <button class="btn sm x" onclick="closeModal()">✕</button></h3>
     <div class="fields">
-      <div><label class="l">Distributor Name *</label><input class="f" id="fN" value="${esc(x.name)}" ${p && p.bills ? 'readonly title="Has bills: name cannot change"' : ''}></div>
+      <div><label class="l">Distributor Name *</label><input class="f" id="fN" value="${esc(x.name)}">${p && p.bills ? '<div class="small muted" style="margin-top:3px">Renaming moves all ' + p.bills + ' bill(s) to the new name.</div>' : ''}</div>
       <div><label class="l">GSTIN *</label><input class="f" id="fG" value="${esc(x.gstin)}" maxlength="15" style="text-transform:uppercase"></div>
       <div style="grid-column:1/-1"><label class="l">Address *</label><input class="f" id="fA" value="${esc(x.address)}"></div>
       <div><label class="l">Phone No</label><input class="f" id="fP" value="${esc(x.phone)}" inputmode="tel"></div>
@@ -648,9 +648,25 @@ function partyForm(p) {
       const merge = await ask('Same GSTIN', 'GSTIN ' + g + ' already belongs to “' + other.name + '”.\n\nMerge this distributor into “' + other.name + '” (move its bills and remove the duplicate)?\n\nCancel = keep them separate anyway.', 'Merge into ' + other.name);
       if (merge) { if (p && DB.normKey(p.name) !== DB.normKey(name)) { /* renaming into other */ } const n = await mergeDistributors(other.name, [other.name, (p ? p.name : name)]); closeModal(); toast('Merged into ' + other.name + ' (' + n + ' bill line(s) moved)'); render(); return; }
     }
+    const party = { name, address: a, gstin: g, pan: DB.panOf(g), phone: $('fP').value.trim(), licence: $('fL').value.trim() };
+    const renaming = p && DB.normKey(p.name) !== DB.normKey(name);
     if (!p && DB.D.parties.some(q => DB.normKey(q.name) === name)) return $('fMsg').innerHTML = '<span class="neg">This distributor already exists</span>';
-    if (p && p.name !== name && !p.bills) await DB.delMany('parties', [p.name]);
-    await DB.putMany('parties', [{ name, address: a, gstin: g, pan: DB.panOf(g), phone: $('fP').value.trim(), licence: $('fL').value.trim() }]);
+    if (renaming) {
+      const collide = DB.D.parties.find(q => DB.normKey(q.name) === DB.normKey(name));
+      if (collide) {
+        if (!await ask('Name already exists', 'A distributor named “' + collide.name + '” already exists.\n\nMerge “' + p.name + '” into it (move its bills)?', 'Merge', true)) return;
+        await mergeDistributors(collide.name, [collide.name, p.name]);
+        closeModal(); toast('Merged into ' + collide.name); render(); return;
+      }
+      // move every bill to the new name, then move the party record
+      const changed = DB.D.purchases.filter(l => DB.normKey(l.distributor) === DB.normKey(p.name));
+      changed.forEach(l => l.distributor = name);
+      if (changed.length) await DB.putMany('purchases', changed);
+      await DB.delMany('parties', [p.name]);
+      await DB.putMany('parties', [party]);
+      closeModal(); toast('Renamed to ' + name + (changed.length ? ' (' + changed.length + ' bill line(s) moved)' : '')); render(); return;
+    }
+    await DB.putMany('parties', [party]);
     closeModal(); toast('Saved'); render();
   };
   if ($('fDel')) $('fDel').onclick = async () => { if (!License.guardWrite()) return; if (await ask('Delete', 'Delete ' + p.name + '?', 'Delete', true)) { await DB.delMany('parties', [p.name]); closeModal(); render(); } };
