@@ -52,6 +52,9 @@ A modern web app version of the **PHARMACY_BILL.xlsm** workbook. It works on And
 - Codes are made with `license-generator.html` (kept privately by the provider, never in this repo). It holds the private signing key — keep a safe backup and never share it.
 - Note: a web app's source cannot be hidden; the licence controls *access and the renewal period*, not code secrecy.
 
+## Merging duplicate distributors
+The same distributor often appears under slightly different names ("ANU AGENCY" vs "M/S ANU AGENCY"). Party Details → **Merge duplicates** auto-detects likely duplicates (by **GSTIN** and by squashed name) and merges them: all bills move onto the kept name, blank details are filled in, and the extra names are removed (stock is unaffected). A manual two-name merge is also there. Entering a GSTIN that already belongs to another distributor offers to merge into it.
+
 ## Importing Excel
 Importing an Excel workbook now **adds to** the existing data (it does not replace it). Lines already present are skipped by content, so re-importing an overlapping file adds only the new lines. The **same file** (matched by its exact contents) is **skipped** automatically. Settings → Data lists imported files and can "Allow re-import" if you need to load one again.
 

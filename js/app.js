@@ -7,7 +7,7 @@ const money = n => '₹' + (+n || 0).toLocaleString('en-IN', { minimumFractionDi
 const qty = n => { n = +n || 0; return n ? (Math.round(n * 100) / 100).toLocaleString('en-IN') : ''; };
 const qty0 = n => (Math.round((+n || 0) * 100) / 100).toLocaleString('en-IN');
 const N = DB.num;
-const APP_VERSION = 'pb-v9';   // keep equal to VERSION in sw.js
+const APP_VERSION = 'pb-v10';   // keep equal to VERSION in sw.js
 const SYNC_SQL = `create table if not exists records (
   shop text not null, store text not null, uid text not null,
   up int8 not null, del int2 not null default 0, data jsonb,
@@ -536,7 +536,7 @@ PAGES.purchases = q => {
 /* ================= PARTY DETAILS ================= */
 PAGES.parties = q => {
   const s = q.get('s') || '';
-  setTop('Party Details', `<button class="btn pri" id="ptNew">+ <span class="lbl">Add distributor</span></button>`);
+  setTop('Party Details', `<button class="btn" id="ptMerge">⚮ <span class="lbl">Merge duplicates</span></button><button class="btn pri" id="ptNew">+ <span class="lbl">Add distributor</span></button>`);
   const rows = DB.partyStats().filter(p => DB.matchWords(p.name + ' ' + (p.gstin || '') + ' ' + (p.address || ''), s));
   $('page').innerHTML = `<div class="card"><label class="l">Search</label><input class="f" id="ptS" value="${esc(s)}" placeholder="Name, GSTIN or address"></div>
     ${table('pt', [{ h: 'Sr', f: p => rows.indexOf(p) + 1 }, { h: 'Distributor Name', f: p => esc(p.name) + (p.missing ? ' <span class="pill warn">details missing</span>' : '') }, { h: 'Address', f: p => esc(p.address) },
@@ -545,8 +545,75 @@ PAGES.parties = q => {
       { click: 1, foot: ['', rows.length + ' distributors', '', '', '', '', '', rows.reduce((a, p) => a + p.bills, 0), money(rows.reduce((a, p) => a + p.total, 0))] })}`;
   $('ptS').oninput = debounce(e => { history.replaceState(null, '', '#/parties?s=' + encodeURIComponent(e.target.value)); PAGES.parties(route().q); $('ptS').focus(); $('ptS').setSelectionRange(99, 99); }, 250);
   $('ptNew').onclick = () => partyForm(null);
+  const dups = duplicateGroups();
+  const mb = $('ptMerge'); if (mb) { mb.innerHTML = '⚮ <span class="lbl">Merge duplicates</span>' + (dups.length ? ' <span class="pill warn" style="margin-left:4px">' + dups.length + '</span>' : ''); mb.onclick = () => mergeDialog(); }
   wireTable('pt', rows, p => partyForm(p), () => PAGES.parties(route().q));
 };
+/* ---- merge duplicate distributors (same shop under different name spellings) ---- */
+/* a loose key so "G.R. MEDICAL STORES", "GR MEDICAL STORE", "M/S G R MEDICAL STORES" group together */
+function squashName(name) {
+  return DB.normKey(name).replace(/\bM\s*\/?\s*S\b/g, '').replace(/[^A-Z0-9]/g, '').replace(/S$/, '');
+}
+/* groups of distributors that look like the same one: first by GSTIN, then by squashed name */
+function duplicateGroups() {
+  const parties = DB.partyStats();
+  const groups = [], seen = new Set();
+  const add = (arr, reason) => { if (arr.length > 1) { const key = arr.map(p => DB.normKey(p.name)).sort().join('|'); if (!seen.has(key)) { seen.add(key); groups.push({ members: arr, reason }); } } };
+  const byG = {}; parties.forEach(p => { const g = (p.gstin || '').toUpperCase().replace(/\s/g, ''); if (g) (byG[g] = byG[g] || []).push(p); });
+  Object.values(byG).forEach(a => add(a, 'same GSTIN'));
+  const byN = {}; parties.forEach(p => { const k = squashName(p.name); if (k) (byN[k] = byN[k] || []).push(p); });
+  Object.values(byN).forEach(a => add(a, 'similar name'));
+  return groups;
+}
+/* move every bill of the merged names onto the kept name, fill blank details, delete the extras */
+async function mergeDistributors(keepName, mergeNames) {
+  const keepK = DB.normKey(keepName);
+  const others = [...new Set(mergeNames.map(DB.normKey))].filter(k => k !== keepK);
+  if (!others.length) return 0;
+  const changed = DB.D.purchases.filter(l => others.includes(DB.normKey(l.distributor)));
+  changed.forEach(l => l.distributor = keepName);
+  if (changed.length) await DB.putMany('purchases', changed);
+  const keep = DB.D.parties.find(q => DB.normKey(q.name) === keepK);
+  if (keep) { let ch = false; for (const k of others) { const o = DB.D.parties.find(q => DB.normKey(q.name) === k); if (o) for (const f of ['address', 'gstin', 'pan', 'phone', 'licence']) if (!keep[f] && o[f]) { keep[f] = o[f]; ch = true; } } if (ch) await DB.putMany('parties', [keep]); }
+  const delKeys = DB.D.parties.filter(q => others.includes(DB.normKey(q.name))).map(q => q.name);
+  if (delKeys.length) await DB.delMany('parties', delKeys);
+  return changed.length;
+}
+function mergeDialog() {
+  if (!License.guardWrite()) return;
+  const groups = duplicateGroups();
+  const body = groups.length ? groups.map((g, gi) => {
+    const def = g.members.slice().sort((a, b) => (b.gstin ? 1 : 0) - (a.gstin ? 1 : 0) || b.bills - a.bills)[0];
+    return `<div class="card" style="margin-bottom:10px"><div class="small muted" style="margin-bottom:6px">Looks like one distributor (${esc(g.reason)}). Choose the name to keep:</div>
+      ${g.members.map(m => `<label class="row-flex" style="padding:4px 0"><input type="radio" name="g${gi}" value="${esc(m.name)}" ${m.name === def.name ? 'checked' : ''}>
+        <span class="grow"><b>${esc(m.name)}</b> <span class="muted small">${m.bills} bill(s) · ${money(m.total)}${m.gstin ? ' · ' + esc(m.gstin) : ''}</span></span></label>`).join('')}
+      <div class="row-flex" style="margin-top:6px;justify-content:flex-end"><button class="btn sm pri" data-merge="${gi}">Merge these ${g.members.length}</button></div></div>`;
+  }).join('') : '<div class="empty">No likely duplicates found automatically.</div>';
+  const names = DB.partyStats().map(p => p.name);
+  modal(`<h3>Merge duplicate distributors <button class="btn sm x" onclick="closeModal()">✕</button></h3>
+    <p class="small muted">Merging moves all bills onto the kept distributor and removes the extra names. Stock is not affected. This cannot be undone, so download a backup first if unsure.</p>
+    ${body}
+    <div class="card"><div class="small muted" style="margin-bottom:6px">Or merge any two by hand:</div>
+      <div class="fields"><div><label class="l">Keep this one</label><input class="f" id="mKeep" list="mNames" placeholder="Distributor to keep"></div>
+        <div><label class="l">Merge this into it</label><input class="f" id="mFrom" list="mNames" placeholder="Duplicate to remove"></div></div>
+      <datalist id="mNames">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <div class="row-flex" style="margin-top:8px;justify-content:flex-end"><button class="btn pri" id="mManual">Merge</button></div></div>`, true);
+  document.querySelectorAll('[data-merge]').forEach(b => b.onclick = async () => {
+    const gi = +b.dataset.merge, keep = document.querySelector('input[name="g' + gi + '"]:checked').value;
+    const mem = groups[gi].members.map(m => m.name);
+    const n = await mergeDistributors(keep, mem);
+    toast('Merged into ' + keep + ' (' + n + ' bill line(s) moved)'); closeModal(); render(); setTimeout(mergeDialog, 100);
+  });
+  $('mManual').onclick = async () => {
+    const keep = DB.normKey($('mKeep').value), from = DB.normKey($('mFrom').value);
+    const kp = DB.D.parties.find(p => DB.normKey(p.name) === keep), fp = DB.D.parties.find(p => DB.normKey(p.name) === from);
+    if (!kp || !fp) return toast('Pick two existing distributor names');
+    if (keep === from) return toast('Pick two different distributors');
+    if (!await ask('Merge', 'Move all bills of “' + fp.name + '” into “' + kp.name + '” and remove “' + fp.name + '”?', 'Merge', true)) return;
+    const n = await mergeDistributors(kp.name, [kp.name, fp.name]);
+    toast('Merged (' + n + ' bill line(s) moved)'); closeModal(); render();
+  };
+}
 function partyForm(p) {
   const x = p || { name: '', address: '', gstin: '', phone: '', licence: '' };
   modal(`<h3>${p ? 'Edit distributor' : 'Add distributor'} <button class="btn sm x" onclick="closeModal()">✕</button></h3>
@@ -569,7 +636,10 @@ function partyForm(p) {
     if (!g) return $('fMsg').innerHTML = '<span class="neg">Type the GSTIN</span>';
     if (!DB.gstinOK(g) && !await ask('GSTIN looks wrong', g + ' is not a valid GSTIN format. Save anyway?', 'Save')) return;
     const other = DB.D.parties.find(q => q.gstin === g && DB.normKey(q.name) !== DB.normKey(p ? p.name : name));
-    if (other && !await ask('Same GSTIN', 'GSTIN ' + g + ' is already used by ' + other.name + '. Save anyway?', 'Save')) return;
+    if (other) {
+      const merge = await ask('Same GSTIN', 'GSTIN ' + g + ' already belongs to “' + other.name + '”.\n\nMerge this distributor into “' + other.name + '” (move its bills and remove the duplicate)?\n\nCancel = keep them separate anyway.', 'Merge into ' + other.name);
+      if (merge) { if (p && DB.normKey(p.name) !== DB.normKey(name)) { /* renaming into other */ } const n = await mergeDistributors(other.name, [other.name, (p ? p.name : name)]); closeModal(); toast('Merged into ' + other.name + ' (' + n + ' bill line(s) moved)'); render(); return; }
+    }
     if (!p && DB.D.parties.some(q => DB.normKey(q.name) === name)) return $('fMsg').innerHTML = '<span class="neg">This distributor already exists</span>';
     if (p && p.name !== name && !p.bills) await DB.delMany('parties', [p.name]);
     await DB.putMany('parties', [{ name, address: a, gstin: g, pan: DB.panOf(g), phone: $('fP').value.trim(), licence: $('fL').value.trim() }]);
