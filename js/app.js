@@ -105,12 +105,16 @@ PAGES.dashboard = () => {
   }
   const st = DB.stock().rows, now = new Date(), ym = now.getFullYear() * 100 + now.getMonth() + 1;
   const inStock = st.filter(s => s.rem > 0), val = DB.r2x(inStock.reduce((a, s) => a + s.value, 0));
+  const purchVal = DB.r2x(DB.D.purchases.reduce((a, l) => a + N(l.net), 0));
+  const soldVal = DB.r2x(st.reduce((a, s) => a + (s.sold > 0 ? s.sold * s.unit : 0), 0));
+  const adjVal = DB.r2x(st.reduce((a, s) => a + (s.add - s.red) * s.unit, 0));
   const addM = (k, m) => { let y = Math.floor(k / 100), mo = k % 100 + m; while (mo > 12) { mo -= 12; y++; } return y * 100 + mo; };
   const soon = inStock.filter(s => s.exp && s.exp >= ym && s.exp <= addM(ym, 3)), expired = inStock.filter(s => s.exp && s.exp < ym);
   const neg = st.filter(s => s.rem < 0);
   const mStart = DB.todayISO().slice(0, 8) + '01', bm = DB.bills().filter(b => (b.date || '') >= mStart);
   const ready = DB.D.inbox.filter(x => x.status === 'ready').length;
   const td = DB.todayISO(), salesT = DB.D.sales.filter(x => x.date === td), salesM = DB.D.sales.filter(x => (x.date || '') >= mStart);
+  const expRows = [...expired, ...soon].sort((a, b) => a.exp - b.exp);
   const byDist = {}; bm.forEach(b => byDist[b.distributor] = (byDist[b.distributor] || 0) + b.total);
   const top = Object.entries(byDist).sort((a, b) => b[1] - a[1]).slice(0, 6), mx = top.length ? top[0][1] : 1;
   $('page').innerHTML = `
@@ -123,6 +127,7 @@ PAGES.dashboard = () => {
       <div class="kpi ${expired.length ? 'bad' : ''}"><span>Already expired, in stock</span><b>${expired.length}</b><small>${money(expired.reduce((a, s) => a + s.value, 0))}</small></div>
       ${neg.length ? `<div class="kpi bad"><span>Negative stock</span><b>${neg.length}</b><small>sold more than purchased</small></div>` : ''}
     </div>
+    <div class="note" style="margin-top:-6px">Stock value <b>${money(val)}</b> = Purchases ${money(purchVal)} − Sold ${money(soldVal)}${adjVal ? (adjVal > 0 ? ' + ' : ' − ') + 'Stock adjustments ' + money(Math.abs(adjVal)) : ''}${neg.length ? ' · negative stock not counted' : ''}</div>
     <div class="grid2">
       <div class="card"><h2>Latest bills <a class="sub" href="#/purchases">All bills →</a></h2>${table('dbl', [
         { h: 'Date', f: b => esc(DB.showDate(b.date)) }, { h: 'Distributor', f: b => esc(b.distributor) }, { h: 'Invoice', f: b => esc(b.invoiceNo) }, { h: 'Value', n: 1, f: b => money(b.total) }],
@@ -132,8 +137,9 @@ PAGES.dashboard = () => {
     <div class="card"><h2>Expiring soon (in stock) <a class="sub" href="#/expiry">Expiry Search →</a></h2>${table('dexp', [
       { h: 'Medicine', f: s => esc(s.name) }, { h: 'Batch', f: s => esc(s.batch) }, { h: 'Expiry', f: s => `<span class="pill ${s.exp < ym ? 'bad' : 'warn'}">${DB.expShow(s.exp)}</span>` },
       { h: 'In stock', n: 1, f: s => qty(s.rem) }, { h: 'Value', n: 1, f: s => money(s.value) }],
-      [...expired, ...soon].sort((a, b) => a.exp - b.exp), { limit: 10, empty: 'Nothing expires in the next 3 months.' })}</div>`;
+      expRows, { limit: 10, empty: 'Nothing expires in the next 3 months.' })}</div>`;
   wireTable('dbl', DB.bills().slice(0, 8), b => showBill(b.key));
+  wireTable('dexp', expRows, null, () => PAGES.dashboard());
 };
 
 /* ================= SCAN BILLS (inbox) ================= */
