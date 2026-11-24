@@ -194,8 +194,12 @@ function stock() {
     if (!l.item || normKey(l.item) === 'NA') continue;
     const x = get(l.item, l.batch);
     x.pur += num(l.qty); x.free += num(l.free);
-    const rt = num(l.rate);
-    if (rt > 0) x.cost += num(l.qty) * rt * (1 - num(l.disc) / 100) * (1 + (num(l.cgst) + num(l.sgst)) / 100);
+    // money actually paid for this line = its Net Amount (the same figure Purchase Details adds up),
+    // so stock value always equals total purchases minus what has been sold. Fall back to the rate
+    // formula only when a line has no Net saved.
+    let paid = num(l.net);
+    if (!paid && num(l.rate) > 0) paid = num(l.qty) * num(l.rate) * (1 - num(l.disc) / 100) * (1 + (num(l.cgst) + num(l.sgst)) / 100);
+    x.cost += paid;
     const k = expKey(l.exp); if (k) x.exp = k;
     if (num(l.mrp)) x.mrp = num(l.mrp);
     if (l.mfg) x.mfg = l.mfg;
