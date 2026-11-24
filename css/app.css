@@ -168,3 +168,9 @@ code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;pad
   table.lines tr.hint{display:block;margin:-8px 0 10px}
   .tw.lines-w{border:0;background:none;overflow:visible}
 }
+
+#updateBar{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(24px);z-index:95;display:none;align-items:center;gap:12px;background:var(--pri);color:var(--pri-ink);padding:10px 12px 10px 16px;border-radius:14px;box-shadow:0 10px 30px #0005;max-width:calc(100% - 24px);opacity:0;transition:.25s}
+#updateBar.on{display:flex;opacity:1;transform:translateX(-50%)}
+#updateBar b{font-size:13.5px}#updateBar small{display:block;opacity:.85;font-size:11.5px}
+#updateBar button{background:var(--pri-ink);color:var(--pri);border:0;border-radius:10px;padding:8px 14px;font-weight:700;cursor:pointer;white-space:nowrap}
+#updateBar .x{background:transparent;color:var(--pri-ink);opacity:.8;padding:6px 8px;font-weight:400}

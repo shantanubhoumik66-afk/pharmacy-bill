@@ -7,6 +7,7 @@ const money = n => '₹' + (+n || 0).toLocaleString('en-IN', { minimumFractionDi
 const qty = n => { n = +n || 0; return n ? (Math.round(n * 100) / 100).toLocaleString('en-IN') : ''; };
 const qty0 = n => (Math.round((+n || 0) * 100) / 100).toLocaleString('en-IN');
 const N = DB.num;
+const APP_VERSION = 'pb-v9';   // keep equal to VERSION in sw.js
 const SYNC_SQL = `create table if not exists records (
   shop text not null, store text not null, uid text not null,
   up int8 not null, del int2 not null default 0, data jsonb,
@@ -901,6 +902,28 @@ function passwordDialog(change) {
     await License.setPassword(a); closeModal(); toast('Password saved'); render();
   };
 }
+/* Show a refresh banner when a newer version has been deployed to the same link */
+let _updateShown = false;
+async function checkForUpdate() {
+  if (_updateShown || !location.protocol.startsWith('http')) return;
+  try {
+    const r = await fetch('sw.js?_=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const m = (await r.text()).match(/const VERSION = '([^']+)'/);
+    if (m && m[1] && m[1] !== APP_VERSION) showUpdateBar();
+  } catch (e) {}
+}
+function showUpdateBar() {
+  _updateShown = true;
+  const el = $('updateBar');
+  el.innerHTML = '<div><b>New version available</b><small>Refresh to get the latest</small></div><button id="updNow">Refresh</button><button class="x" id="updLater" aria-label="Later">✕</button>';
+  el.classList.add('on');
+  $('updNow').onclick = async () => {
+    try { if ('serviceWorker' in navigator) { const reg = await navigator.serviceWorker.getRegistration(); if (reg) await reg.update(); } } catch (e) {}
+    location.reload();
+  };
+  $('updLater').onclick = () => el.classList.remove('on');
+}
 function applyTheme() { const t = DB.getSetting('theme', ''); if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
 
 /* ================= start ================= */
@@ -912,5 +935,8 @@ function applyTheme() { const t = DB.getSetting('theme', ''); if (t) document.do
   Sync.onStatus(updateSyncDot);
   if (Sync.enabled()) Sync.start(() => { if (!['bill', 'sale'].includes(route().page)) render(); else renderNav(); });
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  setTimeout(checkForUpdate, 8000);                                   // soon after opening
+  setInterval(checkForUpdate, 20 * 60 * 1000);                        // every 20 min while open
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdate(); });   // when reopened
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});   // ask the browser not to clear the data
 })();
