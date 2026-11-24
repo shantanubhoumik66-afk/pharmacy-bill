@@ -128,6 +128,16 @@ const sig = parts => parts.map(v => typeof v === 'number' ? DB.r2(v) : DB.normKe
 const purSig = l => sig([l.distributor, l.invoiceNo, l.item, l.batch, l.exp, l.qty, l.free, l.mrp, l.rate, l.disc, l.cgst, l.sgst, l.net]);
 const itemSig = it => sig([it.date, it.item, it.batch, it.invoiceNo, it.qtyPacks, it.net, it.mrp, it.strip, it.loose, it.freePcs]);
 const adjSig = a => sig([a.date, a.item, a.batch, a.add, a.reduce, a.reason, a.enteredOn]);
+/* same contents -> same short id on every device, so importing the same bill on the laptop AND the
+   phone makes one record after sync (not two). Manually typed bills keep their own random id. */
+function cyrb53(str, seed = 0) {
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+  for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507); h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507); h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+const detUid = (prefix, sigStr) => prefix + cyrb53(sigStr);
 
 async function applyImport(x) {
   const rep = { parties: 0, purchases: 0, pSkip: 0, sales: 0, saleItems: 0, adjust: 0, adjustUndone: 0 };
@@ -136,7 +146,7 @@ async function applyImport(x) {
   const pset = new Set(DB.D.parties.map(p => DB.normKey(p.name))), newParties = [];
   for (const p of x.parties) {
     const k = DB.normKey(p.name);
-    if (!pset.has(k)) { pset.add(k); newParties.push(p); continue; }
+    if (!pset.has(k)) { pset.add(k); p._uid = detUid('pty_', k); newParties.push(p); continue; }
     const ex = DB.D.parties.find(q => DB.normKey(q.name) === k);
     if (ex) { let ch = false; for (const f of ['address', 'gstin', 'pan', 'phone', 'licence']) if (!ex[f] && p[f]) { ex[f] = p[f]; ch = true; } if (ch) await DB.putMany('parties', [ex]); }
   }
@@ -144,24 +154,24 @@ async function applyImport(x) {
 
   // purchase lines: add only lines not already present (same bill + item + batch + numbers)
   const psig = new Set(DB.D.purchases.map(purSig)), addP = [];
-  for (const l of x.purchases) { const s = purSig(l); if (psig.has(s)) { rep.pSkip++; continue; } psig.add(s); addP.push(l); }
+  for (const l of x.purchases) { const s = purSig(l); if (psig.has(s)) { rep.pSkip++; continue; } psig.add(s); l._uid = detUid('pur_', s); addP.push(l); }
   if (addP.length) { await DB.putMany('purchases', addP); rep.purchases = addP.length; }
 
   // sales header: add invoices not already present
   const sset = new Set(DB.D.sales.map(s => invK(s.invoiceNo)));
-  const addS = x.sales.filter(s => { const k = invK(s.invoiceNo); if (sset.has(k)) return false; sset.add(k); return true; });
+  const addS = x.sales.filter(s => { const k = invK(s.invoiceNo); if (sset.has(k)) return false; sset.add(k); s._uid = detUid('sal_', k); return true; });
   if (addS.length) { await DB.putMany('sales', addS); rep.sales = addS.length; }
 
   const iset = new Set(DB.D.saleItems.map(itemSig));
-  const addI = x.saleItems.filter(it => { const s = itemSig(it); if (iset.has(s)) return false; iset.add(s); return true; });
+  const addI = x.saleItems.filter(it => { const s = itemSig(it); if (iset.has(s)) return false; iset.add(s); it._uid = detUid('sit_', s); return true; });
   if (addI.length) { await DB.putMany('saleItems', addI); rep.saleItems = addI.length; }
 
   const aset = new Set(DB.D.adjust.map(adjSig));
-  const addA = x.adjust.filter(a => { const s = adjSig(a); if (aset.has(s)) return false; aset.add(s); return true; });
+  const addA = x.adjust.filter(a => { const s = adjSig(a); if (aset.has(s)) return false; aset.add(s); a._uid = detUid('adj_', s); return true; });
   if (addA.length) { await DB.putMany('adjust', addA); rep.adjust = addA.length; }
 
   const uset = new Set(DB.D.adjustUndone.map(a => adjSig(a) + '|' + DB.normKey(a.undoneOn || '')));
-  const addU = x.adjustUndone.filter(a => { const s = adjSig(a) + '|' + DB.normKey(a.undoneOn || ''); if (uset.has(s)) return false; uset.add(s); return true; });
+  const addU = x.adjustUndone.filter(a => { const s = adjSig(a) + '|' + DB.normKey(a.undoneOn || ''); if (uset.has(s)) return false; uset.add(s); a._uid = detUid('adu_', s); return true; });
   if (addU.length) { await DB.putMany('adjustUndone', addU); rep.adjustUndone = addU.length; }
 
   if (x.shop && !DB.getSetting('shopName')) await DB.setSetting('shopName', x.shop);
