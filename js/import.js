@@ -122,17 +122,51 @@ async function importWorkbook(file, onProgress) {
   return { purchases, parties, sales, saleItems, adjust, adjustUndone, shop, shopInfo, report };
 }
 
-/* Replace all business data with the workbook's data */
+/* MERGE the workbook into the existing data (keep old data, add only new rows, skip duplicates). */
+const invK = s => String(s || '').toUpperCase().trim();
+const sig = parts => parts.map(v => typeof v === 'number' ? DB.r2(v) : DB.normKey(String(v == null ? '' : v))).join('|');
+const purSig = l => sig([l.distributor, l.invoiceNo, l.item, l.batch, l.exp, l.qty, l.free, l.mrp, l.rate, l.disc, l.cgst, l.sgst, l.net]);
+const itemSig = it => sig([it.date, it.item, it.batch, it.invoiceNo, it.qtyPacks, it.net, it.mrp, it.strip, it.loose, it.freePcs]);
+const adjSig = a => sig([a.date, a.item, a.batch, a.add, a.reduce, a.reason, a.enteredOn]);
+
 async function applyImport(x) {
-  await DB.clearStores(['parties', 'purchases', 'sales', 'saleItems', 'adjust', 'adjustUndone']);
-  await DB.putMany('parties', x.parties);
-  await DB.putMany('purchases', x.purchases);
-  if (x.sales.length) await DB.putMany('sales', x.sales);
-  if (x.saleItems.length) await DB.putMany('saleItems', x.saleItems);
-  if (x.adjust.length) await DB.putMany('adjust', x.adjust);
-  if (x.adjustUndone.length) await DB.putMany('adjustUndone', x.adjustUndone);
+  const rep = { parties: 0, purchases: 0, pSkip: 0, sales: 0, saleItems: 0, adjust: 0, adjustUndone: 0 };
+
+  // distributors: add new; fill only blank fields on existing ones (never overwrite)
+  const pset = new Set(DB.D.parties.map(p => DB.normKey(p.name))), newParties = [];
+  for (const p of x.parties) {
+    const k = DB.normKey(p.name);
+    if (!pset.has(k)) { pset.add(k); newParties.push(p); continue; }
+    const ex = DB.D.parties.find(q => DB.normKey(q.name) === k);
+    if (ex) { let ch = false; for (const f of ['address', 'gstin', 'pan', 'phone', 'licence']) if (!ex[f] && p[f]) { ex[f] = p[f]; ch = true; } if (ch) await DB.putMany('parties', [ex]); }
+  }
+  if (newParties.length) { await DB.putMany('parties', newParties); rep.parties = newParties.length; }
+
+  // purchase lines: add only lines not already present (same bill + item + batch + numbers)
+  const psig = new Set(DB.D.purchases.map(purSig)), addP = [];
+  for (const l of x.purchases) { const s = purSig(l); if (psig.has(s)) { rep.pSkip++; continue; } psig.add(s); addP.push(l); }
+  if (addP.length) { await DB.putMany('purchases', addP); rep.purchases = addP.length; }
+
+  // sales header: add invoices not already present
+  const sset = new Set(DB.D.sales.map(s => invK(s.invoiceNo)));
+  const addS = x.sales.filter(s => { const k = invK(s.invoiceNo); if (sset.has(k)) return false; sset.add(k); return true; });
+  if (addS.length) { await DB.putMany('sales', addS); rep.sales = addS.length; }
+
+  const iset = new Set(DB.D.saleItems.map(itemSig));
+  const addI = x.saleItems.filter(it => { const s = itemSig(it); if (iset.has(s)) return false; iset.add(s); return true; });
+  if (addI.length) { await DB.putMany('saleItems', addI); rep.saleItems = addI.length; }
+
+  const aset = new Set(DB.D.adjust.map(adjSig));
+  const addA = x.adjust.filter(a => { const s = adjSig(a); if (aset.has(s)) return false; aset.add(s); return true; });
+  if (addA.length) { await DB.putMany('adjust', addA); rep.adjust = addA.length; }
+
+  const uset = new Set(DB.D.adjustUndone.map(a => adjSig(a) + '|' + DB.normKey(a.undoneOn || '')));
+  const addU = x.adjustUndone.filter(a => { const s = adjSig(a) + '|' + DB.normKey(a.undoneOn || ''); if (uset.has(s)) return false; uset.add(s); return true; });
+  if (addU.length) { await DB.putMany('adjustUndone', addU); rep.adjustUndone = addU.length; }
+
   if (x.shop && !DB.getSetting('shopName')) await DB.setSetting('shopName', x.shop);
   for (const [k, v] of Object.entries(x.shopInfo || {})) if (v && !DB.getSetting(k)) await DB.setSetting(k, v);
+  return rep;
 }
 
 /* Export everything back to an Excel file in the same layout (one sheet per distributor) */

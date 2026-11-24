@@ -773,6 +773,7 @@ PAGES.settings = q => {
     <p class="small muted" style="margin-top:0">${DB.D.purchases.length.toLocaleString('en-IN')} bill lines · ${DB.D.parties.length} distributors · ${DB.D.sales.length} sales invoices (${DB.D.saleItems.length} lines) · ${DB.D.adjust.length} stock adjustments. Data is stored on this device. Download a backup regularly.</p>
     <div class="row-flex"><button class="btn pri" id="sImp">⬆ Import Excel workbook (.xlsm)</button><button class="btn" id="sExp">⬇ Export to Excel</button>
       <button class="btn" id="sBak">⬇ Download backup</button><button class="btn" id="sRes">⬆ Restore backup</button><button class="btn bad" id="sWipe">Delete all data</button></div>
+    <div id="impHist" class="small muted" style="margin-top:8px"></div>
     <p class="small muted">Use the backup file to move your data between the shop PC and your phone.</p>
     <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px">
       <label class="row-flex small"><input type="checkbox" id="sKeepImg"> Keep the scanned bill photo on this device (so you can open the original bill later)</label>
@@ -804,6 +805,10 @@ PAGES.settings = q => {
   if ($('sPwChange')) $('sPwChange').onclick = () => passwordDialog(true);
   if ($('sPwOff')) $('sPwOff').onclick = async () => { if (await ask('Remove password', 'Remove the app password? The app will open without asking.', 'Remove', true)) { await License.setPassword(''); toast('Password removed'); render(); } };
   $('sZero').value = DB.getSetting('zeroGstAs', 'NIL') || 'NIL';
+  (function(){ const imp = DB.getSetting('imports', []); const el = $('impHist'); if (!el) return;
+    el.innerHTML = imp.length ? '📄 Imported files (duplicates are skipped): ' + imp.map(i => esc(i.name)).join(', ') + ' <a href="#" id="impClr">Allow re-import</a>' : 'No Excel files imported yet. Importing adds to your data; the same file is skipped.';
+    const c = $('impClr'); if (c) c.onclick = async e => { e.preventDefault(); if (await ask('Allow re-import', 'Forget the list of imported files? You will then be able to import any of them again (which may add duplicate lines).', 'Allow re-import')) { await DB.setSetting('imports', []); toast('Import history cleared'); PAGES.settings(route().q); } };
+  })();
   if ($('sKeepImg')) {
     $('sKeepImg').checked = DB.getSetting('keepImages', true);
     $('sKeepImg').onchange = async () => { await DB.setSetting('keepImages', $('sKeepImg').checked); toast('Saved'); };
@@ -852,13 +857,25 @@ async function importExcelFlow() {
   const [f] = await pickFile('.xlsm,.xlsx,.xls'); if (!f) return;
   modal('<h3><span class="spin"></span> Reading ' + esc(f.name) + '…</h3><p class="muted small" id="impMsg">This can take a few seconds.</p>');
   try {
+    // same file before? (match by exact contents, so a renamed copy is still caught)
+    const buf = await f.arrayBuffer();
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map(b => b.toString(16).padStart(2, '0')).join('');
+    const imports = DB.getSetting('imports', []);
+    const dup = imports.find(i => i.hash === hash);
+    if (dup) { closeModal(); return toast('This file was already imported on ' + dup.at.slice(0, 10) + ' — skipped so nothing is duplicated.', 6000); }
+
     const x = await Importer.importWorkbook(f, m => { const e = $('impMsg'); if (e) e.textContent = m; });
     const val = x.purchases.reduce((a, l) => a + l.net, 0);
     closeModal();
-    if (!await ask('Import workbook', `Found ${x.report.sheets} distributor sheets with ${x.purchases.length.toLocaleString('en-IN')} bill lines (${money(val)}), ${x.parties.length} distributors, ${x.saleItems.length} sale lines and ${x.adjust.length} stock adjustments.\n\nThis REPLACES the bills, distributors, sales and adjustments now in the app.`, 'Import', !!DB.D.purchases.length)) return;
+    const cur = DB.D.purchases.length;
+    if (!await ask('Import workbook', `Found ${x.report.sheets} distributor sheets with ${x.purchases.length.toLocaleString('en-IN')} bill lines (${money(val)}), ${x.parties.length} distributors, ${x.saleItems.length} sale lines and ${x.adjust.length} stock adjustments.\n\n${cur ? 'These will be ADDED to your current ' + cur.toLocaleString('en-IN') + ' bill lines. Lines already in the app are skipped, so nothing is duplicated.' : 'This will load the data into the app.'}`, cur ? 'Add to my data' : 'Import')) return;
     modal('<h3><span class="spin"></span> Saving…</h3>');
-    await Importer.applyImport(x);
-    closeModal(); toast('Imported ' + x.purchases.length.toLocaleString('en-IN') + ' bill lines'); go('dashboard'); render();
+    const rep = await Importer.applyImport(x);
+    imports.push({ name: f.name, size: f.size, hash, at: new Date().toISOString(), added: rep.purchases, skipped: rep.pSkip });
+    await DB.setSetting('imports', imports);
+    closeModal();
+    toast('Added ' + rep.purchases.toLocaleString('en-IN') + ' new bill lines' + (rep.pSkip ? ', skipped ' + rep.pSkip.toLocaleString('en-IN') + ' already present' : '') + (rep.parties ? ' · ' + rep.parties + ' new distributors' : ''), 6000);
+    go('dashboard'); render();
   } catch (e) { closeModal(); toast('Import failed: ' + e.message, 6000); console.error(e); }
 }
 function updateSyncDot() {

@@ -52,6 +52,9 @@ A modern web app version of the **PHARMACY_BILL.xlsm** workbook. It works on And
 - Codes are made with `license-generator.html` (kept privately by the provider, never in this repo). It holds the private signing key — keep a safe backup and never share it.
 - Note: a web app's source cannot be hidden; the licence controls *access and the renewal period*, not code secrecy.
 
+## Importing Excel
+Importing an Excel workbook now **adds to** the existing data (it does not replace it). Lines already present are skipped by content, so re-importing an overlapping file adds only the new lines. The **same file** (matched by its exact contents) is **skipped** automatically. Settings → Data lists imported files and can "Allow re-import" if you need to load one again.
+
 ## Live sync (phone & PC show the same data)
 Optional. Connect every device of one shop to a free **Supabase** project and they stay in sync automatically.
 - Setup is in **Settings → Live sync**: create a free project, run the shown SQL once, paste the Project URL, anon key and a Shop ID (one per shop, same on all devices).
